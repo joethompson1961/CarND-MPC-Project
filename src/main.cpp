@@ -98,8 +98,22 @@ int main() {
           * Both are in between [-1, 1].
           *
           */
+          Eigen::VectorXd state(4);
+          Eigen::VectorXd coeff(2);
+
+          state[0] = px;
+          state[1] = py;
+          state[2] = psi;
+          state[3] = v;
+          coeff[0] = ptsx;
+          coeff[1] = ptsy;
+
           double steer_value;
           double throttle_value;
+
+          auto a1 = mpc.Solve(state, coeff);
+          throttle_value = a1[0];
+          steer_value = a1[1];
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
