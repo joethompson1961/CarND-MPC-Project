@@ -14,8 +14,8 @@ using json = nlohmann::json;
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
-double deg2rad(double x) { return x * pi() / 180; }
-double rad2deg(double x) { return x * 180 / pi(); }
+double deg2rad(double x) { return (x) * pi() / 180; }
+double rad2deg(double x) { return (x) * 180 / pi(); }
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -44,8 +44,7 @@ double polyeval(Eigen::VectorXd coeffs, double x) {
 // Fit a polynomial.
 // Adapted from
 // https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
-Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
-                        int order) {
+Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals, int order) {
   assert(xvals.size() == yvals.size());
   assert(order >= 1 && order <= xvals.size() - 1);
   Eigen::MatrixXd A(xvals.size(), order + 1);
@@ -76,6 +75,8 @@ int main() {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
+    size_t i;
+
     string sdata = string(data).substr(0, length);
     cout << sdata << endl;
     if (sdata.size() > 2 && sdata[0] == '4' && sdata[1] == '2') {
@@ -87,10 +88,12 @@ int main() {
           // j[1] is the data JSON object
           vector<double> ptsx = j[1]["ptsx"];
           vector<double> ptsy = j[1]["ptsy"];
-          double px = j[1]["x"];
-          double py = j[1]["y"];
+          double x = j[1]["x"];
+          double y = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
+          double cte = j[1]["cte"];
+          double epsi = j[1]["epsi"];
 
           /*
           * TODO: Calculate steering angle and throttle using MPC.
@@ -98,27 +101,25 @@ int main() {
           * Both are in between [-1, 1].
           *
           */
-          Eigen::VectorXd state(4);
-          Eigen::VectorXd coeff(2);
+          Eigen::VectorXd state(6);
+          state << x, y, psi, v, cte, epsi;
 
-          state[0] = px;
-          state[1] = py;
-          state[2] = psi;
-          state[3] = v;
-          coeff[0] = ptsx;
-          coeff[1] = ptsy;
+          // fit a polynomial to the planned trajectory
+          Eigen::VectorXd x_vals;
+          Eigen::VectorXd y_vals;
+          for (i = 0 ; i < ptsx.size() ; i++) {
+              x_vals[i] = ptsx[i];
+              y_vals[i] = ptsy[i];
+          }
+          auto coeffs = polyfit(x_vals, y_vals, 3);
 
-          double steer_value;
-          double throttle_value;
-
-          auto a1 = mpc.Solve(state, coeff);
-          throttle_value = a1[0];
-          steer_value = a1[1];
+          auto a1 = mpc.Solve(state, coeffs);
+          double throttle_value = a1[4];
+          double steer_value = a1[5];
 
           json msgJson;
-          // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
-          // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
-          msgJson["steering_angle"] = steer_value;
+          // Steering angle must be converted to radians?
+          msgJson["steering_angle"] = deg2rad(steer_value);
           msgJson["throttle"] = throttle_value;
 
           //Display the MPC predicted trajectory 
@@ -127,6 +128,10 @@ int main() {
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
+          for (i = 0 ; i < a1.size() ; i++) {
+              mpc_x_vals[i] = a1[i];
+              mpc_y_vals[i] = a1[i];
+          }
 
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
