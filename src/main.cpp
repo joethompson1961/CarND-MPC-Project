@@ -64,13 +64,44 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals, int order)
   return result;
 }
 
+// Transform a point as observed by car (relative to car) to grid map perspective.
+void transform_car_to_map(double car_x, double car_y, double car_theta,
+                          double observation_x, double observation_y, double& transform_x, double& transform_y) {
+#if 0 // DEBUG
+    cout << "  observation x: " << observation_x << " y: " << observation_y << endl;
+#endif
+
+    transform_x = car_x + (observation_x * cos(car_theta)) - (observation_y * sin(car_theta));
+    transform_y = car_y + (observation_x * sin(car_theta)) + (observation_y * cos(car_theta));
+
+    #if 0 // DEBUG
+    cout << "  transform   x: " << transform_x << " y: " << transform_y << endl << endl;
+#endif
+}
+
+// Transform a point from grid map perspective to car's perspective (front of car faces positive x)
+void transform_map_to_car(double car_x, double car_y, double car_theta,
+                         double map_loc_x, double map_loc_y, double& transform_x, double& transform_y) {
+#if 0 // DEBUG
+    cout << "  map_loc x: " << map_loc_x << " y: " << map_loc_y << endl;
+#endif
+
+    transform_x = (map_loc_x - car_x) * cos(car_theta) + (map_loc_y - car_y) * sin(car_theta);
+    transform_y = - (map_loc_x - car_x) * sin(car_theta) + (map_loc_y - car_y) * cos(car_theta);
+
+#if 0 // DEBUG
+    cout << "  transform   x: " << transform_x << " y: " << transform_y << endl << endl;
+#endif
+}
+
 int main() {
   uWS::Hub h;
 
   // MPC is initialized here!
   MPC mpc;
+  size_t N = 25;
 
-  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&mpc, &N](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -78,7 +109,7 @@ int main() {
     size_t i;
 
     string sdata = string(data).substr(0, length);
-    cout << sdata << endl;
+//    cout << sdata << endl;
     if (sdata.size() > 2 && sdata[0] == '4' && sdata[1] == '2') {
       string s = hasData(sdata);
       if (s != "") {
@@ -88,38 +119,55 @@ int main() {
           // j[1] is the data JSON object
           vector<double> ptsx = j[1]["ptsx"];
           vector<double> ptsy = j[1]["ptsy"];
+          // current state
           double x = j[1]["x"];
           double y = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
-          double cte = j[1]["cte"];
-          double epsi = j[1]["epsi"];
+
+//          cout << endl << "  car state  x: " << x << "  y: " << y << "  psi: " << psi << "  speed: " << v << endl << endl;
+
+          // Transform trajectory to vehicle coordinate system (make them relative to the car)
+          Eigen::VectorXd x_vals(ptsx.size());
+          Eigen::VectorXd y_vals(ptsx.size());
+          for (i = 0 ; i < ptsx.size() ; i++) {
+              transform_map_to_car(x, y, psi, ptsx[i], ptsy[i], x_vals[i], y_vals[i]);
+          }
+          // fit a polynomial to the planned trajectory
+          auto coeffs = polyfit(x_vals, y_vals, 2);
+
+          // The cross track error is calculated by evaluating at polynomial at x, f(x)
+          // and subtracting y.  But since polynomial is relative to car, both x=y=0.
+          double cte = polyeval(coeffs, 0);
+          // ??? what does this mean: Due to the sign starting at 0, the orientation error is -f'(x).
+          double epsi = psi - atan(coeffs[1]); // polynomial is relative to car so deriv(x=0) = coeffs[1]
 
           /*
-          * TODO: Calculate steering angle and throttle using MPC.
+          * Calculate steering angle and throttle using MPC.
           *
           * Both are in between [-1, 1].
           *
           */
           Eigen::VectorXd state(6);
-          state << x, y, psi, v, cte, epsi;
+          state << 0, 0, 0, v, cte, epsi;
 
-          // fit a polynomial to the planned trajectory
-          Eigen::VectorXd x_vals;
-          Eigen::VectorXd y_vals;
-          for (i = 0 ; i < ptsx.size() ; i++) {
-              x_vals[i] = ptsx[i];
-              y_vals[i] = ptsy[i];
-          }
-          auto coeffs = polyfit(x_vals, y_vals, 3);
+          vector<double> a1 = mpc.Solve(state, coeffs);
 
-          auto a1 = mpc.Solve(state, coeffs);
-          double throttle_value = a1[4];
-          double steer_value = a1[5];
+#if 0
+          cout << "a1: " << endl << endl;
+          for(i=0; i<a1.size(); ++i)
+            std::cout << a1[i] << ' ';
+          cout << endl << endl;
+#endif
+
+          double steer_value = a1[N*6];
+          double throttle_value = a1[N*7-1];
+
+          cout << "throttle: " << throttle_value << "   steer: " << steer_value << endl;
 
           json msgJson;
           // Steering angle must be converted to radians?
-          msgJson["steering_angle"] = deg2rad(steer_value);
+          msgJson["steering_angle"] = -steer_value;
           msgJson["throttle"] = throttle_value;
 
           //Display the MPC predicted trajectory 
@@ -128,9 +176,9 @@ int main() {
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
-          for (i = 0 ; i < a1.size() ; i++) {
-              mpc_x_vals[i] = a1[i];
-              mpc_y_vals[i] = a1[i];
+          for (i = 0 ; i < 15 ; i++) {
+              mpc_x_vals.push_back(a1[0 + i]);
+              mpc_y_vals.push_back(a1[N + i]);
           }
 
           msgJson["mpc_x"] = mpc_x_vals;
@@ -142,13 +190,15 @@ int main() {
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
+          for (int i = 0 ; i < x_vals.size() ; i++) {
+            next_x_vals.push_back(x_vals[i]);
+            next_y_vals.push_back(y_vals[i]);
+          }
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
 
-
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
           // Latency
           // The purpose is to mimic real driving conditions where
           // the car does actuate the commands instantly.
