@@ -97,11 +97,20 @@ void transform_map_to_car(double car_x, double car_y, double car_theta,
 int main() {
   uWS::Hub h;
 
-  // MPC is initialized here!
-  MPC mpc;
-  size_t N = 30;
+  // Set MPC timestep length, duration, and target velocity
+//  size_t N = 80;
+//  double dt = 0.025;   // 50 msec time increment
+//  size_t N = 40;
+//  double dt = 0.050;   // 25 msec time increment
+  size_t N = 20;
+  double dt = 0.05;
+  double ref_v = 55.0;
+  int latency = 100;  // 100 msec latency
 
-  h.onMessage([&mpc, &N](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  // MPC is initialized here!
+  MPC mpc(N, dt, ref_v);
+
+  h.onMessage([&mpc, &N, &dt, &ref_v, &latency](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -109,7 +118,10 @@ int main() {
     size_t i;
 
     string sdata = string(data).substr(0, length);
-//    cout << sdata << endl;
+#if 0
+    cout << sdata << endl;
+#endif
+
     if (sdata.size() > 2 && sdata[0] == '4' && sdata[1] == '2') {
       string s = hasData(sdata);
       if (s != "") {
@@ -124,8 +136,21 @@ int main() {
           double y = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
+          double steering = j[1]["steering_angle"];
+          double throttle = j[1]["throttle"];
 
-//          cout << endl << "  car state  x: " << x << "  y: " << y << "  psi: " << psi << "  speed: " << v << endl << endl;
+#if 0
+          cout << endl << "  car state  x: " << x << "  y: " << y << "  psi: " << psi << "  speed: " << v << endl << endl;
+#endif
+
+          // To compensate for latency, project the vehicle's state to reflect where it will
+          // be after one latency period and use that as the current state.
+          double dl = (float)latency/1000;  // convert msec to seconds
+          dl *= 1.0;
+          x = x + v * cos(psi) * dl + throttle * cos(psi) * dl * dl;
+          y = y + v * sin(psi) * dl + throttle * sin(psi) * dl * dl;
+          psi = psi + v * steering * dt / 2.67;
+          v = v + throttle * dl;
 
           // Transform trajectory to vehicle coordinate system (make them relative to the car)
           Eigen::VectorXd x_vals(ptsx.size());
@@ -133,17 +158,27 @@ int main() {
           for (i = 0 ; i < ptsx.size() ; i++) {
               transform_map_to_car(x, y, psi, ptsx[i], ptsy[i], x_vals[i], y_vals[i]);
           }
-          // fit a polynomial to the planned trajectory
+
+          // Fit a 4th order polynomial to the trajectory
           auto coeffs = polyfit(x_vals, y_vals, 2);
 
-          // The cross track error is calculated by evaluating at polynomial at x, f(x)
-          // and subtracting y.  But since polynomial is relative to car, both x=y=0.
+          // From world map perspective the cross track error is calculated by evaluating the
+          // polynomial at x, i.e. f(x), and subtracting y.  But the trajectory has been
+          // converted to car coordinates (above) so the polynomial is now relative to car and
+          // the initial x & y are 0.  Hence the cte calclulation is simplified to be just
+          // the evaluation of the polynomial at x = 0.
           double cte = polyeval(coeffs, 0);
-          // ??? what does this mean: Due to the sign starting at 0, the orientation error is -f'(x).
-          double epsi = psi - atan(coeffs[1]); // polynomial is relative to car so deriv(x=0) = coeffs[1]
+
+          // The orientation error, epsi, is psi - f'(x). Since the polynomial is relative to car
+          // then x = 0 and the calculation of derivative f'(x) is simplified to just coeffs[1].
+          double epsi = psi - atan(coeffs[1]);
+
+#if 0
+          cout << "cte: " << cte << "  epsi: " << epsi << endl;
+#endif
 
           /*
-          * Calculate steering angle and throttle using MPC.
+          * Calculate next predicted steering angle and throttle using MPC.
           *
           * Both are in between [-1, 1].
           *
@@ -163,52 +198,50 @@ int main() {
           double steer_value = a1[N*6];
           double throttle_value = a1[N*7-1];
 
-          cout << "throttle: " << throttle_value << "   steer: " << steer_value << endl;
+//          cout << "throttle: " << throttle_value << "   steer: " << steer_value << endl;
 
           json msgJson;
-          // Steering angle must be converted to radians?
           msgJson["steering_angle"] = -steer_value;
           msgJson["throttle"] = throttle_value;
 
-          //Display the MPC predicted trajectory 
+          // Display the MPC predicted trajectory.
+          //
+          // Add (x,y) some of the points of the predicted trajectory to list here to have
+          // them displayed by the the simulator. The points are in reference to the vehicle's
+          // coordinate system and are displayed in the simulator connected by a green line.
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
-
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Green line
-          for (i = 0 ; i < 20 ; i++) {
+          for (i = 0 ; i < N ; i++) {
               mpc_x_vals.push_back(a1[0 + i]);
               mpc_y_vals.push_back(a1[N + i]);
           }
-
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
 
-          //Display the waypoints/reference line
+          // Display the waypoints/reference line.
+          //
+          // Add (x,y) points of the reference line to list here to have them displayed by
+          // the simulator. The points are in reference to the vehicle's coordinate system
+          // and are displayed in the simulator connected by a yellow line.
           vector<double> next_x_vals;
           vector<double> next_y_vals;
-
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Yellow line
           for (int i = 0 ; i < x_vals.size() ; i++) {
             next_x_vals.push_back(x_vals[i]);
             next_y_vals.push_back(y_vals[i]);
           }
-
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
+
           // Latency
-          // The purpose is to mimic real driving conditions where
-          // the car does actuate the commands instantly.
           //
-          // Feel free to play around with this value but should be to drive
-          // around the track with 100ms latency.
+          // The purpose is to mimic real driving conditions where the car
+          // doesn't actuate the commands instantly.
           //
-          // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
-          // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          // The car should be to drive around the track with 100ms latency.
+          this_thread::sleep_for(chrono::milliseconds(latency));
+
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
