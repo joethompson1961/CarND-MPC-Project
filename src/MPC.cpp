@@ -15,8 +15,9 @@ AD<double> ADpolyeval(Eigen::VectorXd coeffs, AD<double> x) {
 }
 
 // Set the timestep length and duration
-size_t N = 25;
+size_t N = 30;
 double dt = 0.05;
+double ref_v = 45.0;
 
 // This value assumes the model presented in the classroom is used.
 //
@@ -42,8 +43,6 @@ size_t epsi_start = cte_start + N;
 size_t delta_start = epsi_start + N;
 size_t a_start = delta_start + N - 1;
 
-double ref_v = 55.0;
-
 class FG_eval {
 public:
     // Fitted polynomial coefficients
@@ -65,31 +64,28 @@ public:
         // Define the cost related to the reference state
         // Minimize cross track and orientation errors
         for (t = 0; t < N ; t++) {
-            fg[0] += 2.0 * CppAD::pow(vars[cte_start + t], 2);
+//            fg[0] += 2.0 * CppAD::pow(vars[cte_start + t], 2);
+//            fg[0] += 4.0 * CppAD::pow(vars[epsi_start + t], 2);
+//            fg[0] += 4.0 * CppAD::pow(vars[cte_start + t], 2);
+//            fg[0] += 3.0 * CppAD::pow(vars[epsi_start + t], 2);
+            fg[0] += 4.0 * CppAD::pow(vars[cte_start + t], 2);
             fg[0] += 4.0 * CppAD::pow(vars[epsi_start + t], 2);
         }
 
-//        // Minimize distance to destination
-//        for (t = 0; t < N ; t++) {
-//            fg[0] += CppAD::pow(vars[x_start + N - 1] - vars[x_start + t], 2) + CppAD::pow(vars[y_start + N - 1] - vars[y_start + t], 2);
-//        }
-
         // Minimize velocity error (the difference between velocity and target velocity)
         for (t = 0; t < N ; t++) {
-            fg[0] += 3.0 * CppAD::pow(ref_v - vars[v_start + t], 2);
+//            fg[0] += 3.0 * CppAD::pow(ref_v - vars[v_start + t], 2);
+            fg[0] += 2.0 * CppAD::pow(ref_v - vars[v_start + t], 2);
         }
 
         // Minimize the use of actuators.
         for (t = 0; t < N - 1; t++) {
-            fg[0] += 3500.0 * CppAD::pow(vars[delta_start + t], 2);
-            fg[0] += 15.0 * CppAD::pow(vars[a_start + t], 2);
+//            fg[0] += 2500.0 * CppAD::pow(vars[delta_start + t], 2);
+            fg[0] += 2200.0 * CppAD::pow(vars[delta_start + t], 2);
+//            fg[0] += 15.0 * CppAD::pow(vars[a_start + t], 2);
+//            fg[0] += 1.0 * CppAD::pow(vars[a_start + t], 2);
+            fg[0] += 6.0 * CppAD::pow(vars[a_start + t], 2);
         }
-
-//        // Minimize the value gap between sequential actuations.
-//        for (t = 0; t < N - 2; t++) {
-//            fg[0] += 1.0 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-//            fg[0] += 1.0 * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
-//        }
 
         //
         // Setup Constraints
@@ -279,15 +275,8 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // Check some of the solution values
   ok &= solution.status == CppAD::ipopt::solve_result<Dvector>::success;
 
-//  // Cost
-//  auto cost = solution.obj_value;
-//  std::cout << "Cost " << cost << std::endl;
-
-  // TODO: Return the first actuator values. The variables can be accessed with
+  // Return the first actuator values. The variables can be accessed with
   // `solution.x[i]`.
-  //
-  // {...} is shorthand for creating a vector, so auto x1 = {1.0,2.0}
-  // creates a 2 element double vector.
   vector<double> x1;
   for (i = 0; i < n_vars; i++) {
       x1.push_back(solution.x[i]);

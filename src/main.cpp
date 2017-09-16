@@ -99,7 +99,7 @@ int main() {
 
   // MPC is initialized here!
   MPC mpc;
-  size_t N = 25;
+  size_t N = 30;
 
   h.onMessage([&mpc, &N](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -176,7 +176,7 @@ int main() {
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
-          for (i = 0 ; i < 15 ; i++) {
+          for (i = 0 ; i < 20 ; i++) {
               mpc_x_vals.push_back(a1[0 + i]);
               mpc_y_vals.push_back(a1[N + i]);
           }
