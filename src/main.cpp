@@ -104,7 +104,7 @@ int main() {
 //  double dt = 0.050;   // 25 msec time increment
   size_t N = 20;
   double dt = 0.05;
-  double ref_v = 55.0;
+  double ref_v = 72.0;
   int latency = 100;  // 100 msec latency
 
   // MPC is initialized here!
@@ -143,12 +143,22 @@ int main() {
           cout << endl << "  car state  x: " << x << "  y: " << y << "  psi: " << psi << "  speed: " << v << endl << endl;
 #endif
 
+          // For display purposes only, transform the trajectory to vehicle coordinate system
+          // prior to compensating for latency.  This keeps the display centered on the road
+          // instead of causing it to appear shifted around curves.
+          Eigen::VectorXd x_display(ptsx.size());
+          Eigen::VectorXd y_display(ptsx.size());
+          for (i = 0 ; i < ptsx.size() ; i++) {
+              transform_map_to_car(x, y, psi, ptsx[i], ptsy[i], x_display[i], y_display[i]);
+          }
+
           // To compensate for latency, project the vehicle's state to reflect where it will
           // be after one latency period and use that as the current state.
           double dl = (float)latency/1000;  // convert msec to seconds
-          x = x + v * cos(psi) * dl + throttle * cos(psi) * dl * dl;
-          y = y + v * sin(psi) * dl + throttle * sin(psi) * dl * dl;
-          psi = psi + v * steering * dt / 2.67;
+          dl *= 2.0;
+          x += v * cos(psi) * dl;
+          y += v * sin(psi) * dl;
+          psi -= v * steering * dt / 2.67;
           v = v + throttle * dl;
 
           // Transform trajectory to vehicle coordinate system (make them relative to the car)
@@ -169,8 +179,9 @@ int main() {
           double cte = polyeval(coeffs, 0);
 
           // The orientation error, epsi, is psi - f'(x). Since the polynomial is relative to car
-          // then x = 0 and the calculation of derivative f'(x) is simplified to just coeffs[1].
-          double epsi = psi - atan(coeffs[1]);
+          // then psi = 0 and additionally x = 0 so the calculation of derivative f'(x) is simplified
+          // to just coeffs[1].
+          double epsi = -atan(coeffs[1]);
 
 #if 0
           cout << "cte: " << cte << "  epsi: " << epsi << endl;
@@ -225,8 +236,8 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
           for (int i = 0 ; i < x_vals.size() ; i++) {
-            next_x_vals.push_back(x_vals[i]);
-            next_y_vals.push_back(y_vals[i]);
+            next_x_vals.push_back(x_display[i]);
+            next_y_vals.push_back(y_display[i]);
           }
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;

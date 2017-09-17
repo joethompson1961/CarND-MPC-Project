@@ -128,7 +128,7 @@ public:
             AD<double> a0 = vars[a_start + t - 1];
 
             AD<double> f0 = ADpolyeval(coeffs, x0);
-            AD<double> psides0 = CppAD::atan(coeffs[1]);  // desired psi
+            AD<double> psides0 = CppAD::atan(coeffs[1] + 2 * coeffs[2] * x0);  // desired psi
 
             // The idea here is to constrain this value to be 0.
             //
