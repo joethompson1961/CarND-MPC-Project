@@ -146,7 +146,6 @@ int main() {
           // To compensate for latency, project the vehicle's state to reflect where it will
           // be after one latency period and use that as the current state.
           double dl = (float)latency/1000;  // convert msec to seconds
-          dl *= 1.0;
           x = x + v * cos(psi) * dl + throttle * cos(psi) * dl * dl;
           y = y + v * sin(psi) * dl + throttle * sin(psi) * dl * dl;
           psi = psi + v * steering * dt / 2.67;
@@ -159,7 +158,7 @@ int main() {
               transform_map_to_car(x, y, psi, ptsx[i], ptsy[i], x_vals[i], y_vals[i]);
           }
 
-          // Fit a 4th order polynomial to the trajectory
+          // Fit a 2nd order polynomial to the trajectory
           auto coeffs = polyfit(x_vals, y_vals, 2);
 
           // From world map perspective the cross track error is calculated by evaluating the

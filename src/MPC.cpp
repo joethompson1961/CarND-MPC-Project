@@ -60,8 +60,8 @@ public:
         double weights_cte    = 0.0;  // cross track error
         double weights_epsi   = 0.0;  // psi error
         double weights_ev     = 0.0;  // velocity error
-        double weights_delta  = 0.0;// steering actuation
-        double weights_a      = 0.0; // throttle actuation
+        double weights_delta  = 0.0;  // steering actuation
+        double weights_a      = 0.0;  // throttle actuation
 
         weights_cte    = 1.0;  // cross track error
         weights_epsi   = 2.0;  // psi error
