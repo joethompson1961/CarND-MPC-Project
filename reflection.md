@@ -1,55 +1,74 @@
-# CarND-Controls-PID
+# CarND-MPC-Project
 Self-Driving Car Engineer Nanodegree Program
 
 ---
 
-## PID Behavior
+## MPC Model
 
-A PID controller has 3 elements of control: proportional, differential and integral.
+The MPC model used in my implementation includes the following state variables:
 
-These elements are biased using cooefficients which allows the affects of each element to be increased or decreased to achieve an optimal final outcome, i.e. a controller that is stable over the range of inputs.
+**State variables**
+- x - the x position of the vehicle in the vehicle's grid map.
+- y - the y position of the vehicle in the vehicle's grid map.
+- psi - the vehicles orientation relative to the vehicles coordinate system, i.e. front is 0 degrees, increasing counter clockwise. Specified in radians.
+- velocity - the vehicle's velocity in the direction of psi. Specified in miles per hour.
+- cross-track error
+- psi error
 
-Fine tuning the PID controller was largely an empirical problem. By making repeated adjustments to the coefficients and observing the resulting behavior I nudged the controller toward a stable, desirable behavior.
+**Actuations**
+My MPC model predicts the values for two vehicle actuators:
+- steering - in range of <-0.43 : 0.43> radians (-25 : 5 degrees).
+- throttle - in range of <-1.0 : 1.0>.
 
-Before fine tuning the PID controller for this problem, i.e. controlling steering steering based on cross track error with car moving at high speed, I evaluated each of the control coefficients (Kp, Ki, Kd) in an ordered way, first focussing on the proportional part of the controller, Kp, while setting the other coefficients to zero. I ran the car at various speeds.  Here's a description of the resulting behaviors:
+**Constraints**
+My MPC controller implements a cost function to constrain the vehicles behavior.  My cost function tries to minimize the following:
+- cross track error
+- psi error
+- error in velocity vs. target speed
+- changes in steering actuator - used to dampen oscillations.
+- changes in throttle actuator - used to dampen oscillations.
 
-1. **10 MPH**, Kp = 0.1, Ki = 0.0,  Kd = 0.0:
-  - Car navigates the entire track but steering swings very wide around tight curves.  Some steering oscilations present but not too severe.  
-2. **20 MPH**, Kp = 0.1, Ki = 0.0,  Kd = 0.0:
-  - The first hard turn throws the steering into heavy oscillations, car barely manages to stay on the track but makes a successful loop.
-3. **30 MPH**, Kp = 0.1, Ki = 0.0,  Kd = 0.0:
-  - Steering oscillations begin immediately and slowly increase heading into first curve where the car loses control and leaves the track.  
+My MPC controller also implements a kinematic constraint model for the vehicle's state prediction.  The kinematic constraints are a basic euclidean model. The goal of the kinematic constraints is to minimize changes in the state of the vehicle. 
 
-Next, holding and Kp and speed at those values, I began incrementing the differential portion of the controller, Kd, to dampen the oscillations in the proportional response.   
+x1   = x0 + v0 * cos(psi0) * dt					// next x
+y1   = y0 + v0 * sin(psi0) * dt					// next y
+psi1 = psi0 + v0 * steering * dt / Lf			// next psi
+v1   = v0 + (throttle * dt)						// next velocity
+cte1 = cte0 + f0 - y0 + v0 * sin(epsi0) * dt    // cross track error
+epsi = psi0 - psides0 + v0 * delta0 * dt / Lf	// psi error
 
-4. 30 MPH, Kp = 0.1, Ki = 0.0,  **Kd = 0.1**:
-  - Steering oscillations begin immediately but are slightly improved, making it around the first curve before crashing. 
-5. 30 MPH, Kp = 0.1, Ki = 0.0,  **Kd = 0.5**:
-  - This significantly damped the steering oscillations, significantly reducing the over and under shoot of the proportional part of the controller. The car successfully completes a loop but with several very near misses. 
+## Timestep Length and Elapsed Duration (N & dt)
+I tried several combinations of values for timestep length, N, and delta time, dt, to provide a 0.5-2 second horizon for the MPC prediction.
 
-Holding Kp, Kd and speed at those values I then introduce the integral element, Ki, to the controller, adjusting it in steps as follows:
+The values for N and dt that I tried ranged from N=<10:50> and dt=<0.02:0.05>. In the end, as I increased speeds and experimented with various cost weights I found that N = 20 and dt = 0.05 produced reliable results with reasonable performance.
 
-6. 30 MPH, Kp = 0.1, **Ki = 0.1**,  Kd = 0.5:
-  - The steering immediately begins oscillating wildly.  
-7. 30 MPH, Kp = 0.1, **Ki = 0.01**,  Kd = 0.5:
-  - The steering immediately begins oscillating badly, but improved slightly.  
-8. 30 MPH, Kp = 0.1, **Ki = 0.001**,  Kd = 0.5:
-  - The steering oscillations are greatly reduced but still there is an acculuation of slowly increasing oscillation that finally causes the car to crash.  
-9. 30 MPH, Kp = 0.1, **Ki = 0.0001**,  Kd = 0.5:
-  - The vehicle makes a complete loop, sufficient to pass the grader, but steering feels sluglish and more fine tuning necessary to reach higher speeds.  
+## Polynomial Fitting and MPC Preprocessing
 
-## PID Tuning Method
+Before fitting a polynomial to the waypoints, the trajectory waypoints are converted from the global/map coordinate system to the vehicles's coordinate system. In other words, they are made relative to the vehicle instead of the map.
 
-In the beginning I manually experimented with various coeffient values to find a set that looked pretty good.  I then increased the target speed and found the results to be less desirable.
+Doing this transformation simplifies the calculations for cross track error and psi error because initial values for x and y relative to the vehicle are always zero.  Hence the cross track error calculation is simplified to be just the evalution of the polynomial at x = 0, and the psi error calculation is simplfied because the derivitive of f(x) used in the calculation is reduced to just the first coefficient[1].
 
-To better fine tune the controller at higher speeds I found it important to have an objective method for evaluating the results. I implemented a scoring method by measuring 2 values over approximately 1 lap, i.e. for a fixed number of measurements equivalent to about 1 lap depending on the car's speed:
-- **accumulated cross-track error** - the sum of all the absolute values of cross track error at each measurement step.
-- **max cross-track error** - the maximum absolute value of cross track error at each measurement step.
+          // From world map perspective the cross track error is calculated by evaluating the
+          // polynomial at x, i.e. f(x), and subtracting y.  But the trajectory has been
+          // converted to car coordinates (above) so the polynomial is now relative to car and
+          // the initial x & y are 0.  Hence the cte calclulation is simplified to be just
+          // the evaluation of the polynomial at x = 0.
+          double cte = polyeval(coeffs, 0);
 
-The goal is to find the set of coefficients that yield the lowest overall score for both values.
+          // The orientation error, epsi, is psi - f'(x). Since the polynomial is relative to car
+          // then x = 0 and the calculation of derivative f'(x) is simplified to just coeffs[1].
+          double epsi = psi - atan(coeffs[1]);
 
-Using this scoring method I increased the speed to 45 MPH and manually tried a variety of different coefficient values folowing a procedure similar to twiddle, recording the scores after each lap.
+The waypoint transformation also simplifies the initial state used by MPC, since now the current state x, y and psi are all zero relative to the vehicle.
 
-I observed that the resulting score varied some even when re-run with the same coefficient values and speed; this is possibly due to the simulator having some random element in it's behavioral model. This might have made it difficult to get a good outcome with an automated twiddle but I never tried automating it.
+## Model Predictive Control with Latency
 
-After the best score was achieved I was able to increase the target speed to 55MPH and still navigate the course reliably for many laps. 65MPH was the highest speed tested; it completed a lap but then crashed.
+The main loop of the simulator interface (in main.c) implements a 100msec sleep to simulate latency in the response of the actuators as would be typical in a real vehicle.
+
+To compenstate for this latency, the vehicle's state is projected one latency period, i.e. 100 msec, into the future. The compensation is done using the same basic kinetic model calculations used in the MPC solver constraints:
+
+          double dl = (float)latency/1000;  // convert msec to seconds
+          x = x + v * cos(psi) * dl + throttle * cos(psi) * dl * dl;
+          y = y + v * sin(psi) * dl + throttle * sin(psi) * dl * dl;
+          psi = psi + v * steering * dt / 2.67;
+          v = v + throttle * dl;
