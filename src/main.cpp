@@ -104,7 +104,7 @@ int main() {
 //  double dt = 0.050;   // 25 msec time increment
   size_t N = 20;
   double dt = 0.05;
-  double ref_v = 72.0;
+  double ref_v = 77.0;
   int latency = 100;  // 100 msec latency
 
   // MPC is initialized here!
@@ -140,7 +140,8 @@ int main() {
           double throttle = j[1]["throttle"];
 
 #if 0
-          cout << endl << "  car state  x: " << x << "  y: " << y << "  psi: " << psi << "  speed: " << v << endl << endl;
+          cout << "  car state  x: " << x << "  y: " << y << "  psi: " << psi << "  speed: " << v << endl << endl;
+          cout << "  steering: " << steering << "  throttle: " << throttle;
 #endif
 
           // For display purposes only, transform the trajectory to vehicle coordinate system
@@ -155,10 +156,10 @@ int main() {
           // To compensate for latency, project the vehicle's state to reflect where it will
           // be after one latency period and use that as the current state.
           double dl = (float)latency/1000;  // convert msec to seconds
-          dl *= 2.0;
+          dl *= 1.2;
           x += v * cos(psi) * dl;
           y += v * sin(psi) * dl;
-          psi -= v * steering * dt / 2.67;
+          psi -= v * steering * dl / 2.67;
           v = v + throttle * dl;
 
           // Transform trajectory to vehicle coordinate system (make them relative to the car)
@@ -211,7 +212,7 @@ int main() {
 //          cout << "throttle: " << throttle_value << "   steer: " << steer_value << endl;
 
           json msgJson;
-          msgJson["steering_angle"] = -steer_value;
+          msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
           // Display the MPC predicted trajectory.
@@ -230,7 +231,7 @@ int main() {
 
           // Display the waypoints/reference line.
           //
-          // Add (x,y) points of the reference line to list here to have them displayed by
+          // Add (x,y) points of the waypoints to list here to have them displayed by
           // the simulator. The points are in reference to the vehicle's coordinate system
           // and are displayed in the simulator connected by a yellow line.
           vector<double> next_x_vals;

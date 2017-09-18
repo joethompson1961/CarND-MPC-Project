@@ -63,10 +63,10 @@ public:
         double weights_delta  = 0.0;  // steering actuation
         double weights_a      = 0.0;  // throttle actuation
 
-        weights_cte    = 1.0;  // cross track error
-        weights_epsi   = 2.0;  // psi error
+        weights_cte    = 15.0;  // cross track error
+        weights_epsi   = 10.0;  // psi error
         weights_ev     = 1.0;  // velocity error
-        weights_delta  = 2000.0;// steering actuation
+        weights_delta  = 2200.0;// steering actuation
         weights_a      = 3.0;  // throttle actuation
 
         size_t t;
@@ -136,7 +136,7 @@ public:
             // compute derivatives and pass these to the solver.
             fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
             fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
-            fg[1 + psi_start + t] = psi1 - (psi0 + v0 * delta0 * dt / Lf);
+            fg[1 + psi_start + t] = psi1 - (psi0 - v0 * delta0 * dt / Lf);
             fg[1 + v_start + t] = v1 - (v0 + (a0 * dt));
             fg[1 + cte_start + t] = cte1 - (f0 - y0 + v0 * CppAD::sin(epsi0) * dt);
             fg[1 + epsi_start + t] = epsi1 - (psi0 - psides0 + v0 * delta0 * dt / Lf);
