@@ -104,7 +104,7 @@ int main() {
 //  double dt = 0.050;   // 25 msec time increment
   size_t N = 20;
   double dt = 0.05;
-  double ref_v = 77.0;
+  double ref_v = 95.0;
   int latency = 100;  // 100 msec latency
 
   // MPC is initialized here!
@@ -145,7 +145,7 @@ int main() {
 #endif
 
           // For display purposes only, transform the trajectory to vehicle coordinate system
-          // prior to compensating for latency.  This keeps the display centered on the road
+          // prior to compensating for latency. This keeps the display centered on the road
           // instead of causing it to appear shifted around curves.
           Eigen::VectorXd x_display(ptsx.size());
           Eigen::VectorXd y_display(ptsx.size());
@@ -162,7 +162,7 @@ int main() {
           psi -= v * steering * dl / 2.67;
           v = v + throttle * dl;
 
-          // Transform trajectory to vehicle coordinate system (make them relative to the car)
+          // Transform trajectory waypoints to vehicle's coordinate system (make them relative to the car)
           Eigen::VectorXd x_vals(ptsx.size());
           Eigen::VectorXd y_vals(ptsx.size());
           for (i = 0 ; i < ptsx.size() ; i++) {
