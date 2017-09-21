@@ -46,31 +46,32 @@ public:
     double dt;
     double ref_v;
 
-    FG_eval(Eigen::VectorXd coeffs, size_t N, double dt, double ref_v) {
+    // cost function weights - controls relative cost of each part
+    AD<double> w_cte    = 1.0;  // cross track error
+    AD<double> w_epsi   = 1.0;  // psi error
+    AD<double> w_ev     = 1.0;  // velocity error
+    AD<double> w_delta  = 1.0;  // steering actuation
+    AD<double> w_a      = 1.0;  // throttle actuation
+    AD<double> w_curve  = 1.0;  // speed around curves
+
+    FG_eval(Eigen::VectorXd coeffs, size_t N, double dt, double ref_v, double w_cte, double w_epsi,
+            double w_ev, double w_delta, double w_a, double w_curve) {
       this->coeffs = coeffs;
       this->N = N;
       this->dt = dt;
       this->ref_v = ref_v;
+
+      this->w_cte = w_cte;
+      this->w_epsi = w_epsi;
+      this->w_ev = w_ev;
+      this->w_delta = w_delta;
+      this->w_a = w_a;
+      this->w_curve = w_curve;
     }
 
     typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
 
     void operator()(ADvector& fg, const ADvector& vars) {
-        // cost function weights - controls relative cost of each part
-        AD<double> weights_cte    = 15.0;  // cross track error
-        AD<double> weights_epsi   = 10.0;  // psi error
-        AD<double> weights_ev     = 1.0;  // velocity error
-        AD<double> weights_delta  = 2200.0;  // steering actuation
-        AD<double> weights_a      = 3.0;  // throttle actuation
-        AD<double> weights_curve  = 1.0;  // speed around curves
-
-        weights_cte    = 15.0;  // cross track error
-        weights_epsi   = 15.0;  // psi error
-        weights_ev     = 1.0;   // velocity error
-        weights_delta  = 1000.0;// steering actuation
-        weights_a      = 3.0;   // throttle actuation
-        weights_curve  = 250.0;   // speed around curves
-
         size_t t;
 
 //        cout << vars << endl << endl;
@@ -87,34 +88,35 @@ public:
         // Define the cost related to the reference state
         // Minimize cross track and orientation errors
         for (t = 0; t < N ; t++) {
-            cost = weights_cte * CppAD::pow(vars[cte_start + t], 2);
+            cost = w_cte * CppAD::pow(vars[cte_start + t], 2);
 //            cout << "cost - cte: " << cost << endl;
             fg[0] += cost;
 
-            cost = weights_epsi * CppAD::pow(vars[epsi_start + t], 2);
+            cost = w_epsi * CppAD::pow(vars[epsi_start + t], 2);
 //            cout << "cost - epsi: " << cost << endl;
             fg[0] += cost;
         }
 
         // Minimize velocity error (the difference between velocity and target velocity)
         for (t = 0; t < N ; t++) {
-            cost = weights_ev * CppAD::pow(ref_v - vars[v_start + t], 2);
+            cost = w_ev * CppAD::pow(ref_v - vars[v_start + t], 2);
 //            cout << "cost - ev: " << cost << endl;
             fg[0] += cost;
         }
 
         // Minimize the use of actuators.
         for (t = 0; t < N - 1; t++) {
-            cost = weights_delta * CppAD::pow(vars[delta_start + t], 2);
+            cost = w_delta * CppAD::pow(vars[delta_start + t], 2);
 //            cout << "cost - steering use: " << cost << endl;
             fg[0] += cost;
 
-            cost = weights_a * CppAD::pow(vars[a_start + t], 2);
+            cost = w_a * CppAD::pow(vars[a_start + t], 2);
 //            cout << "cost - accel use: " << cost << endl;
             fg[0] += cost;
         }
 
         // Minimize velocity around tight turns.
+        //
         // The formula for the radius of curvature at any point x for the curve y = f(x) is given by:
         //    r = (1 + (dy/dx)**2)**(3/2) / (d2y/dx2)
         // At x = 0, the 1st order derivative is:
@@ -125,7 +127,7 @@ public:
         //    r[0] = (1 + coeffs[1]^2)^1.5) / (2 * coeffs[2])
         AD<double>r0 = CppAD::pow(1.0 + CppAD::pow(coeffs[1], 2), 1.5) / (2 * coeffs[2]);
         for (t = 0; t < N - 1; t++) {
-            cost = weights_curve * CppAD::pow(vars[v_start + t] / r0, 2);
+            cost = w_curve * CppAD::pow(vars[v_start + t] / r0, 2);
 //            cout << "cost - curve: " << cost << endl;
             fg[0] += cost;
         }
@@ -182,10 +184,17 @@ public:
 //
 // MPC class definition implementation.
 //
-MPC::MPC(size_t N, double dt, double ref_v) {
+MPC::MPC(size_t N, double dt, double ref_v, double w_cte, double w_epsi,
+         double w_ev, double w_delta, double w_a, double w_curve) {
   this->N = N;
   this->dt = dt;
   this->ref_v = ref_v;
+  this->w_cte = w_cte;
+  this->w_epsi = w_epsi;
+  this->w_ev = w_ev;
+  this->w_delta = w_delta;
+  this->w_a = w_a;
+  this->w_curve = w_curve;
 
   x_start = 0;
   y_start = x_start + N;
@@ -286,7 +295,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   constraints_upperbound[epsi_start] = epsi;
 
   // object that computes objective and constraints
-  FG_eval fg_eval(coeffs, N, dt, ref_v);
+  FG_eval fg_eval(coeffs, N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_curve);
 
   // options for IPOPT solver
   std::string options;

@@ -11,8 +11,15 @@ class MPC {
   size_t N;
   double dt;
   double ref_v;
+  double w_cte;
+  double w_epsi;
+  double w_ev;
+  double w_delta;
+  double w_a;
+  double w_curve;
 
-  MPC(size_t N, double dt, double ref_v);
+  MPC(size_t N, double dt, double ref_v, double w_cte, double w_epsi,
+      double w_ev, double w_delta, double w_a, double w_curve);
 
   virtual ~MPC();
 

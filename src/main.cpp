@@ -94,23 +94,106 @@ void transform_map_to_car(double car_x, double car_y, double car_theta,
 #endif
 }
 
-int main() {
+class CmdLineParser{
+    public:
+        CmdLineParser (int &argc, char **argv){
+            for (int i=1; i < argc; ++i)
+                this->tokens.push_back(std::string(argv[i]));
+        }
+
+        const std::string& getOption(const std::string &cmd) const{
+            std::vector<std::string>::const_iterator iterator;
+            iterator =  std::find(this->tokens.begin(), this->tokens.end(), cmd);
+            if (iterator != this->tokens.end() && ++iterator != this->tokens.end()){
+                return *iterator;
+            }
+            static const std::string empty_string("");
+            return empty_string;
+        }
+
+        bool exists(const std::string &cmd) const{
+            return std::find(this->tokens.begin(), this->tokens.end(), cmd)
+                   != this->tokens.end();
+        }
+
+    private:
+        std::vector<std::string> tokens;
+};
+
+int main(int argc, char **argv) {
   uWS::Hub h;
 
+  CmdLineParser cmdline(argc, argv);
+  std::string cmd_str;
+
+  // -n for command line override of N
+  int cmd_n = 20;  // default N = 10
+  cmd_str = cmdline.getOption("-n");
+  if (!cmd_str.empty())
+      cmd_n = std::stoi(cmd_str);
+  size_t N = cmd_n;
+
+  // -dt for command line override of dt
+  double dt = 0.05; // msec
+  cmd_str = cmdline.getOption("-dt");
+  if (!cmd_str.empty())
+    dt = std::stod(cmd_str);
+
+  // -lm for command line override of latency multiplier
+  double lm = 1.2; // msec
+  cmd_str = cmdline.getOption("-lm");
+  if (!cmd_str.empty())
+    lm = std::stod(cmd_str);
+
+  // -w_cte for command line override of cost function weight for cte
+  double w_cte = 14; // cost function weight for cte
+  cmd_str = cmdline.getOption("-w_cte");
+  if (!cmd_str.empty()){
+    w_cte = std::stod(cmd_str);
+  }
+
+  double w_epsi   = 20.0;  // psi error
+  cmd_str = cmdline.getOption("-w_epsi");
+  if (!cmd_str.empty()){
+    w_epsi = std::stod(cmd_str);
+  }
+
+  double w_ev     = 1.0;   // velocity error
+  cmd_str = cmdline.getOption("-w_ev");
+  if (!cmd_str.empty()){
+    w_ev = std::stod(cmd_str);
+  }
+
+  double w_delta  = 2200.0;// steering actuation
+  cmd_str = cmdline.getOption("-w_delta");
+  if (!cmd_str.empty()){
+    w_delta = std::stod(cmd_str);
+  }
+
+  double w_a      = 3.0;   // throttle actuation
+  cmd_str = cmdline.getOption("-w_a");
+  if (!cmd_str.empty()){
+    w_a = std::stod(cmd_str);
+  }
+
+  double w_curve  = 350.0;   // speed around curves
+  cmd_str = cmdline.getOption("-w_curve");
+  if (!cmd_str.empty()){
+    w_curve = std::stod(cmd_str);
+  }
+
   // Set MPC timestep length, duration, and target velocity
-//  size_t N = 80;
-//  double dt = 0.025;   // 50 msec time increment
-//  size_t N = 40;
-//  double dt = 0.050;   // 25 msec time increment
-  size_t N = 20;
-  double dt = 0.05;
-  double ref_v = 95.0;
+  double ref_v = 100.0;
   int latency = 100;  // 100 msec latency
 
-  // MPC is initialized here!
-  MPC mpc(N, dt, ref_v);
+  cout << "N: " << N << endl;
+  cout << "dt: " << dt << endl;
+  cout << "lm: " << lm << endl;
 
-  h.onMessage([&mpc, &N, &dt, &ref_v, &latency](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  // MPC is initialized here!
+  MPC mpc(N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_curve);
+
+  h.onMessage([&mpc, &N, &dt, &lm, &ref_v, &latency](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -156,7 +239,7 @@ int main() {
           // To compensate for latency, project the vehicle's state to reflect where it will
           // be after one latency period and use that as the current state.
           double dl = (float)latency/1000;  // convert msec to seconds
-          dl *= 1.2;
+          dl *= lm;  // latency multiplier
           x += v * cos(psi) * dl;
           y += v * sin(psi) * dl;
           psi -= v * steering * dl / 2.67;
