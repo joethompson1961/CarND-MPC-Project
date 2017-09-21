@@ -139,20 +139,31 @@ int main(int argc, char **argv) {
   if (!cmd_str.empty())
     dt = std::stod(cmd_str);
 
+  // Set MPC timestep length, duration, and target velocity
+  double ref_v = 100.0;
+  cmd_str = cmdline.getOption("-ref_v");
+  if (!cmd_str.empty())
+    ref_v = std::stod(cmd_str);
+
+  int latency = 100;  // 100 msec latency
+  cmd_str = cmdline.getOption("-lat");
+  if (!cmd_str.empty())
+    latency = std::stoi(cmd_str);
+
   // -lm for command line override of latency multiplier
-  double lm = 1.2; // msec
+  double lm = 1.25; // msec
   cmd_str = cmdline.getOption("-lm");
   if (!cmd_str.empty())
     lm = std::stod(cmd_str);
 
   // -w_cte for command line override of cost function weight for cte
-  double w_cte = 14; // cost function weight for cte
+  double w_cte = 25; // cost function weight for cte
   cmd_str = cmdline.getOption("-w_cte");
   if (!cmd_str.empty()){
     w_cte = std::stod(cmd_str);
   }
 
-  double w_epsi   = 20.0;  // psi error
+  double w_epsi   = 100.0;  // psi error
   cmd_str = cmdline.getOption("-w_epsi");
   if (!cmd_str.empty()){
     w_epsi = std::stod(cmd_str);
@@ -164,7 +175,7 @@ int main(int argc, char **argv) {
     w_ev = std::stod(cmd_str);
   }
 
-  double w_delta  = 2200.0;// steering actuation
+  double w_delta  = 2300.0;// steering actuation
   cmd_str = cmdline.getOption("-w_delta");
   if (!cmd_str.empty()){
     w_delta = std::stod(cmd_str);
@@ -176,22 +187,40 @@ int main(int argc, char **argv) {
     w_a = std::stod(cmd_str);
   }
 
+  double w_sd      = 0.5;   // rate of steering actuation change
+  cmd_str = cmdline.getOption("-w_sd");
+  if (!cmd_str.empty()){
+    w_sd = std::stod(cmd_str);
+  }
+
+  double w_sa      = 1.0;   // rate of throttle actuation change
+  cmd_str = cmdline.getOption("-w_sa");
+  if (!cmd_str.empty()){
+    w_sa = std::stod(cmd_str);
+  }
+
   double w_curve  = 350.0;   // speed around curves
   cmd_str = cmdline.getOption("-w_curve");
   if (!cmd_str.empty()){
     w_curve = std::stod(cmd_str);
   }
 
-  // Set MPC timestep length, duration, and target velocity
-  double ref_v = 100.0;
-  int latency = 100;  // 100 msec latency
-
-  cout << "N: " << N << endl;
-  cout << "dt: " << dt << endl;
+  cout << "N: " << N << endl;     // MPC duration
+  cout << "dt: " << dt << endl;   // MPC timestep length
+  cout << "ref_v: " << ref_v << endl;  // target velocity
+  cout << "latency: " << latency << endl;
   cout << "lm: " << lm << endl;
+  cout << "w_cte: " << w_cte << endl;
+  cout << "w_epsi: " << w_epsi << endl;
+  cout << "w_ev: " << w_ev << endl;
+  cout << "w_delta: " << w_delta << endl;
+  cout << "w_a: " << w_a << endl;
+  cout << "w_sd: " << w_sd << endl;
+  cout << "w_sa: " << w_sa << endl;
+  cout << "w_curve: " << w_curve << endl;
 
   // MPC is initialized here!
-  MPC mpc(N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_curve);
+  MPC mpc(N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_sd, w_sa, w_curve);
 
   h.onMessage([&mpc, &N, &dt, &lm, &ref_v, &latency](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -305,7 +334,7 @@ int main(int argc, char **argv) {
           // coordinate system and are displayed in the simulator connected by a green line.
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
-          for (i = 0 ; i < N ; i++) {
+          for (i = 3 ; i < 14 ; i++) {
               mpc_x_vals.push_back(a1[0 + i]);
               mpc_y_vals.push_back(a1[N + i]);
           }

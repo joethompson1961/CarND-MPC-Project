@@ -52,10 +52,12 @@ public:
     AD<double> w_ev     = 1.0;  // velocity error
     AD<double> w_delta  = 1.0;  // steering actuation
     AD<double> w_a      = 1.0;  // throttle actuation
+    AD<double> w_sd     = 1.0;  // rate of steering change
+    AD<double> w_sa     = 1.0;  // rate of throttle change
     AD<double> w_curve  = 1.0;  // speed around curves
 
     FG_eval(Eigen::VectorXd coeffs, size_t N, double dt, double ref_v, double w_cte, double w_epsi,
-            double w_ev, double w_delta, double w_a, double w_curve) {
+            double w_ev, double w_delta, double w_a, double w_sd, double w_sa, double w_curve) {
       this->coeffs = coeffs;
       this->N = N;
       this->dt = dt;
@@ -66,6 +68,8 @@ public:
       this->w_ev = w_ev;
       this->w_delta = w_delta;
       this->w_a = w_a;
+      this->w_sd = w_sd;
+      this->w_sa = w_sa;
       this->w_curve = w_curve;
     }
 
@@ -115,6 +119,15 @@ public:
             fg[0] += cost;
         }
 
+        // Minimize gap between sequential actuations
+        for (t = 0; t < N - 2; t++) {
+            cost = w_sd * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+            fg[0] += cost;
+
+            cost = w_sa * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+            fg[0] += cost;
+        }
+
         // Minimize velocity around tight turns.
         //
         // The formula for the radius of curvature at any point x for the curve y = f(x) is given by:
@@ -131,8 +144,6 @@ public:
 //            cout << "cost - curve: " << cost << endl;
             fg[0] += cost;
         }
-
-//        cout << endl;
 
         // Setup the model constraints.
         //
@@ -185,7 +196,7 @@ public:
 // MPC class definition implementation.
 //
 MPC::MPC(size_t N, double dt, double ref_v, double w_cte, double w_epsi,
-         double w_ev, double w_delta, double w_a, double w_curve) {
+         double w_ev, double w_delta, double w_a, double w_sd, double w_sa, double w_curve) {
   this->N = N;
   this->dt = dt;
   this->ref_v = ref_v;
@@ -194,6 +205,8 @@ MPC::MPC(size_t N, double dt, double ref_v, double w_cte, double w_epsi,
   this->w_ev = w_ev;
   this->w_delta = w_delta;
   this->w_a = w_a;
+  this->w_sd = w_sd;
+  this->w_sa = w_sa;
   this->w_curve = w_curve;
 
   x_start = 0;
@@ -295,7 +308,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   constraints_upperbound[epsi_start] = epsi;
 
   // object that computes objective and constraints
-  FG_eval fg_eval(coeffs, N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_curve);
+  FG_eval fg_eval(coeffs, N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_sd, w_sa, w_curve);
 
   // options for IPOPT solver
   std::string options;
