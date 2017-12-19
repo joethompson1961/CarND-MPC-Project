@@ -61,6 +61,18 @@ Self-Driving Car Engineer Nanodegree Program
 3. Compile: `cmake .. && make`
 4. Run it: `./mpc`.
 
+## Running Simulator on Windows and MPC on Linux
+
+You can run the simulator on windows and the code on Linux (either 2 separate machines (Windows & Linux respectively) or with Linux in VirtualBox on Windows).
+
+1. Setup the project on Linux
+2. Run this command on the Windows machine in Powershell window:
+
+	netsh interface portproxy add v4tov4 listenport=4567 listenaddress=127.0.0.1 connectport=4567 connectaddress=<mpc_pc_ip_address> protocol=tcp
+
+3. I had to make sure the wired ethernet port was attached to building network???
+4. Start the simulator (term2_sim.exe) on Windows and run mpc on Linux.
+
 ## Tips
 
 1. It's recommended to test the MPC on basic examples to see if your implementation behaves as desired. One possible example
