@@ -140,30 +140,34 @@ int main(int argc, char **argv) {
     dt = std::stod(cmd_str);
 
   // Set MPC timestep length, duration, and target velocity
-  double ref_v = 100.0;
+  double ref_v = 110.0;
   cmd_str = cmdline.getOption("-ref_v");
   if (!cmd_str.empty())
     ref_v = std::stod(cmd_str);
 
-  int latency = 100;  // 100 msec latency
+  int latency = 100;  // 100 msec actuator latency
   cmd_str = cmdline.getOption("-lat");
   if (!cmd_str.empty())
     latency = std::stoi(cmd_str);
 
   // -lm for command line override of latency multiplier
-  double lm = 1.25; // msec
-  cmd_str = cmdline.getOption("-lm");
+  //
+  // The latency multiplier adds some additional latency to account for the simulator's processing time plus socket communication delay.
+  //
+  // total latency = sleep(latency) + simulator processing time + communication delay
+  double clat = 35;
+  cmd_str = cmdline.getOption("-clat");
   if (!cmd_str.empty())
-    lm = std::stod(cmd_str);
+    clat = std::stod(cmd_str);
 
   // -w_cte for command line override of cost function weight for cte
-  double w_cte = 25; // cost function weight for cte
+  double w_cte = 40; // cost function weight for cte
   cmd_str = cmdline.getOption("-w_cte");
   if (!cmd_str.empty()){
     w_cte = std::stod(cmd_str);
   }
 
-  double w_epsi   = 100.0;  // psi error
+  double w_epsi   = 1.0;  // psi error
   cmd_str = cmdline.getOption("-w_epsi");
   if (!cmd_str.empty()){
     w_epsi = std::stod(cmd_str);
@@ -175,31 +179,31 @@ int main(int argc, char **argv) {
     w_ev = std::stod(cmd_str);
   }
 
-  double w_delta  = 2300.0;// steering actuation
+  double w_delta  = 4500.0;// steering actuation
   cmd_str = cmdline.getOption("-w_delta");
   if (!cmd_str.empty()){
     w_delta = std::stod(cmd_str);
   }
 
-  double w_a      = 3.0;   // throttle actuation
+  double w_a      = 0.1;   // throttle actuation
   cmd_str = cmdline.getOption("-w_a");
   if (!cmd_str.empty()){
     w_a = std::stod(cmd_str);
   }
 
-  double w_sd      = 0.5;   // rate of steering actuation change
+  double w_sd      = 10.0;   // rate of steering actuation change
   cmd_str = cmdline.getOption("-w_sd");
   if (!cmd_str.empty()){
     w_sd = std::stod(cmd_str);
   }
 
-  double w_sa      = 1.0;   // rate of throttle actuation change
+  double w_sa      = 0.1;   // rate of throttle actuation change
   cmd_str = cmdline.getOption("-w_sa");
   if (!cmd_str.empty()){
     w_sa = std::stod(cmd_str);
   }
 
-  double w_curve  = 350.0;   // speed around curves
+  double w_curve  = 19.0;   // speed around curves
   cmd_str = cmdline.getOption("-w_curve");
   if (!cmd_str.empty()){
     w_curve = std::stod(cmd_str);
@@ -209,7 +213,7 @@ int main(int argc, char **argv) {
   cout << "dt: " << dt << endl;   // MPC timestep length
   cout << "ref_v: " << ref_v << endl;  // target velocity
   cout << "latency: " << latency << endl;
-  cout << "lm: " << lm << endl;
+  cout << "clat: " << clat << endl;
   cout << "w_cte: " << w_cte << endl;
   cout << "w_epsi: " << w_epsi << endl;
   cout << "w_ev: " << w_ev << endl;
@@ -222,7 +226,7 @@ int main(int argc, char **argv) {
   // MPC is initialized here!
   MPC mpc(N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_sd, w_sa, w_curve);
 
-  h.onMessage([&mpc, &N, &dt, &lm, &ref_v, &latency](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&mpc, &N, &dt, &clat, &ref_v, &latency](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -246,7 +250,7 @@ int main(int argc, char **argv) {
           // current state
           double x = j[1]["x"];
           double y = j[1]["y"];
-          double psi = j[1]["psi"];
+          double psi = j[1]["psi"];  // car heading
           double v = j[1]["speed"];
           double steering = j[1]["steering_angle"];
           double throttle = j[1]["throttle"];
@@ -265,16 +269,16 @@ int main(int argc, char **argv) {
               transform_map_to_car(x, y, psi, ptsx[i], ptsy[i], x_display[i], y_display[i]);
           }
 
-          // To compensate for latency, project the vehicle's state to reflect where it will
+          // To compensate for actuation latency, project the vehicle's state to reflect where it will
           // be after one latency period and use that as the current state.
-          double dl = (float)latency/1000;  // convert msec to seconds
-          dl *= lm;  // latency multiplier
+          double dl = (float)(latency + clat)/1000;  // convert msec to seconds
           x += v * cos(psi) * dl;
           y += v * sin(psi) * dl;
           psi -= v * steering * dl / 2.67;
           v = v + throttle * dl;
 
           // Transform trajectory waypoints to vehicle's coordinate system (make them relative to the car)
+          // The trajectory that we're trying to follow (ptsx[],ptsy[]) is the centerline of the road.
           Eigen::VectorXd x_vals(ptsx.size());
           Eigen::VectorXd y_vals(ptsx.size());
           for (i = 0 ; i < ptsx.size() ; i++) {
@@ -284,17 +288,18 @@ int main(int argc, char **argv) {
           // Fit a 2nd order polynomial to the trajectory
           auto coeffs = polyfit(x_vals, y_vals, 2);
 
-          // From world map perspective the cross track error is calculated by evaluating the
-          // polynomial at x, i.e. f(x), and subtracting y.  But the trajectory has been
-          // converted to car coordinates (above) so the polynomial is now relative to car and
-          // the initial x & y are 0.  Hence the cte calclulation is simplified to be just
-          // the evaluation of the polynomial at x = 0.
+          // From world map perspective the cross track error is calculated by evaluating the trajectory
+          // polynomial at x, i.e. f(x), and subtracting y, i.e. from where the vehicle is in global frame.
+          // The trajectory has been converted to car coordinates (above) so the polynomial
+          // is now relative to car and the initial x is 0.  Since the map follows the center of the
+          // lane, i.e. y=0 at center, the cte calculation is simplified to be just the evaluation of the
+          // polynomial at x = 0.
           double cte = polyeval(coeffs, 0);
 
-          // The orientation error, epsi, is psi - f'(x). Since the polynomial is relative to car
+          // The orientation error, epsi, is psi - f'(x) (f'(x) is the slope at position x). Since the polynomial is relative to car
           // then psi = 0 and additionally x = 0 so the calculation of derivative f'(x) is simplified
           // to just coeffs[1].
-          double epsi = -atan(coeffs[1]);
+          double epsi = -atan(coeffs[1]);  // epsi the difference between car's current heading and the desired heading from trajectory.
 
 #if 0
           cout << "cte: " << cte << "  epsi: " << epsi << endl;
@@ -323,6 +328,9 @@ int main(int argc, char **argv) {
 
 //          cout << "throttle: " << throttle_value << "   steer: " << steer_value << endl;
 
+          /*
+           * Build json message for simulator
+           */
           json msgJson;
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
@@ -330,7 +338,7 @@ int main(int argc, char **argv) {
           // Display the MPC predicted trajectory.
           //
           // Add (x,y) some of the points of the predicted trajectory to list here to have
-          // them displayed by the the simulator. The points are in reference to the vehicle's
+          // them displayed by the simulator. The points are in reference to the vehicle's
           // coordinate system and are displayed in the simulator connected by a green line.
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
@@ -365,6 +373,9 @@ int main(int argc, char **argv) {
           // The car should be to drive around the track with 100ms latency.
           this_thread::sleep_for(chrono::milliseconds(latency));
 
+          /*
+           * Send json message to simulator
+           */
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {

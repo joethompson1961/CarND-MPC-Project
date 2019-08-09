@@ -8,8 +8,11 @@ using CppAD::AD;
 // Evaluate a polynomial.
 AD<double> ADpolyeval(Eigen::VectorXd coeffs, AD<double> x) {
     AD<double> result = 0.0;
+    AD<double> x_to_the_ith = 1.0;
     for (int i = 0; i < coeffs.size(); i++) {
-        result += coeffs[i] * CppAD::pow(x, i);
+//        result += coeffs[i] * CppAD::pow(x, i);
+        result += coeffs[i] * x_to_the_ith;
+        x_to_the_ith *= x;
     }
     return result;
 }
@@ -20,15 +23,14 @@ AD<double> ADpolyeval(Eigen::VectorXd coeffs, AD<double> x) {
 // simulator around in a circle with a constant steering angle and velocity on a
 // flat terrain.
 //
-// Lf was tuned until the the radius formed by the simulating the model
+// Lf was tuned until the the radius formed by simulating the model
 // presented in the classroom matched the previous radius.
 //
 // This is the length from front to center-of-gravity that has a similar radius.
 const double Lf = 2.67;
 
-// The solver takes all the state variables and actuator
-// variables in a singular vector. Thus, we should to establish
-// when one variable starts and another ends to make our lifes easier.
+// The solver receives the state and actuator vectors within one large vector. These indices
+// distinguish where within the large vector each variable vector starts and, implicitly, where each ends.
 size_t x_start;
 size_t y_start;
 size_t psi_start;
@@ -40,13 +42,16 @@ size_t a_start;
 
 class FG_eval {
 public:
-    // Fitted polynomial coefficients
-    Eigen::VectorXd coeffs;
+    //
+    Eigen::VectorXd coeffs;  // Fitted 2nd order polynomial coefficients of the desired trajectory.
+    Eigen::VectorXd d_coeffs;  // first derivative of Fitted 2nd order polynomial
+    Eigen::VectorXd dd_coeffs;  // second derivative of Fitted 2nd order polynomial
+
     size_t N;
     double dt;
     double ref_v;
 
-    // cost function weights - controls relative cost of each part
+    // Cost function weights with defaults - controls relative cost of each part
     AD<double> w_cte    = 1.0;  // cross track error
     AD<double> w_epsi   = 1.0;  // psi error
     AD<double> w_ev     = 1.0;  // velocity error
@@ -56,6 +61,7 @@ public:
     AD<double> w_sa     = 1.0;  // rate of throttle change
     AD<double> w_curve  = 1.0;  // speed around curves
 
+    // Constructor
     FG_eval(Eigen::VectorXd coeffs, size_t N, double dt, double ref_v, double w_cte, double w_epsi,
             double w_ev, double w_delta, double w_a, double w_sd, double w_sa, double w_curve) {
       this->coeffs = coeffs;
@@ -63,6 +69,7 @@ public:
       this->dt = dt;
       this->ref_v = ref_v;
 
+      // cost function weights
       this->w_cte = w_cte;
       this->w_epsi = w_epsi;
       this->w_ev = w_ev;
@@ -75,16 +82,33 @@ public:
 
     typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
 
+    // NOTE TO SELF: This class, FG_eval, is a C++ functor, i.e. it overloads operator(), i.e. it
+    // returns a function that can then be used by the caller. Note that functors are always copied,
+    // so good to avoid large code and data that is expensive to copy.
+    //
+    // The idea here is that the optimizer is trying to find a set of inputs (i.e. vars - the
+    // things that are controlled, in this case the vehicle's states and actuators) that produce
+    // produce the lowest costs (fg), i.e. where the contents of the fg vector ideally equal 0.
+    //
+    // This functor is used to calculate what is the cost associated with each set of inputs.
+    //
+    // In this particular usage the input vars represents a sequence of N future trajectory states.
+    //
+    // CppAD (Algorithmic Differentiation, aka Automatic Differentiation) is for the step by step
+    // conversion from an algorithm that computes function values to an algorithm that computes derivative
+    // values. Given a C++ algorithm that computes function values, CppAD generates an algorithm that
+    // computes its derivative values.
+    //
+    // Need to confirm:  The optimizer uses the derivative function to evaluate the change
+    // in cost with respect to the inputs.
     void operator()(ADvector& fg, const ADvector& vars) {
-        size_t t;
-
-//        cout << vars << endl << endl;
-
-        // `fg` a vector of the cost constraints, `vars` is a vector of variable values (state & actuators)
-        // NOTE: You'll probably go back and forth between this function and
-        // the Solver function below.
-        // The cost is stored is the first element of `fg`.
+        // `fg` a vector of the cost constraints to be filled by this functor.
+        // `vars` is a vector of input variable values (state & actuators), the things the solver
+        // controls.
+        //
+        // The cost is stored is the first element of `fg`, i.e. fg[0].
         // Any additions to the cost should be added to `fg[0]`.
+        size_t t;
         AD<double> cost;
         fg[0] = 0;
 
@@ -132,18 +156,27 @@ public:
         //
         // The formula for the radius of curvature at any point x for the curve y = f(x) is given by:
         //    r = (1 + (dy/dx)**2)**(3/2) / (d2y/dx2)
-        // At x = 0, the 1st order derivative is:
-        //    y' = dy/dx = coeffs[1]
-        // At x = 0, the 2nd derivative is:
-        //    y'' = 2 * coeffs[2]
-        // Therefore at x=0 the radius is:
-        //    r[0] = (1 + coeffs[1]^2)^1.5) / (2 * coeffs[2])
+        // where the 1st derivative of y (2nd order polynomial) is:
+        //    y' = dy/dx = coeffs[1] + (2 * coeffs[2] * x)
+        // and the 2nd derivative of y is:
+        //    y'' = d2y/d2x = 2 * coeffs[2]
+        // At x=0 the radius is:
+        //    r[0] = (1 + coeffs[1]**2)**1.5) / (2 * coeffs[2])
         AD<double>r0 = CppAD::pow(1.0 + CppAD::pow(coeffs[1], 2), 1.5) / (2 * coeffs[2]);
         for (t = 0; t < N - 1; t++) {
-            cost = w_curve * CppAD::pow(vars[v_start + t] / r0, 2);
-//            cout << "cost - curve: " << cost << endl;
+            cost = w_curve * CppAD::pow(vars[v_start + t], 2) / r0;
             fg[0] += cost;
         }
+        // At any x the radius is:
+        //    r = (1 + (coeffs[1] + (2*coeffs[2]*x))**2)**1.5) / (2 * coeffs[2])
+//        for (t = 0; t < N - 1; t++) {
+//            AD<double> x = vars[x_start + t];
+//            AD<double> dy_dx = coeffs[1] + 2*coeffs[2]*x;
+//            AD<double> r = CppAD::pow(1.0 + dy_dx*dy_dx, 1.5) / (2 * coeffs[2]);
+//            AD<double> lateral_accel = (vars[v_start + t] * vars[v_start + t]) / r;
+//            cost = w_curve * lateral_accel;
+//            fg[0] += cost;
+//        }
 
         // Setup the model constraints.
         //
@@ -178,7 +211,6 @@ public:
             AD<double> f0 = ADpolyeval(coeffs, x0);
             AD<double> psides0 = CppAD::atan(coeffs[1] + 2 * coeffs[2] * x0);  // desired psi
 
-            // The idea here is to constrain this value to be 0.
             //
             // The use of `AD<double>` and use of `CppAD` is so CppAD can
             // compute derivatives and pass these to the solver.
@@ -335,7 +367,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
       constraints_upperbound, fg_eval, solution);
 
   // Check some of the solution values
-  ok &= solution.status == CppAD::ipopt::solve_result<Dvector>::success;
+  ok &= (solution.status == CppAD::ipopt::solve_result<Dvector>::success);
 
   // Return the first actuator values. The variables can be accessed with
   // `solution.x[i]`.

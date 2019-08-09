@@ -31,10 +31,15 @@ My MPC controller implements a cost function to constrain the vehicles behavior.
 My MPC controller also implements a kinematic constraint model for the vehicle's state prediction.  The kinematic constraints are a basic euclidean model. The goal of the kinematic constraints is to minimize changes in the state of the vehicle. 
 
 x1   = x0 + v0 * cos(psi0) * dt					// next x
+
 y1   = y0 + v0 * sin(psi0) * dt					// next y
+
 psi1 = psi0 + v0 * steering * dt / Lf			// next psi
+
 v1   = v0 + (throttle * dt)						// next velocity
+
 cte1 = cte0 + f0 - y0 + v0 * sin(epsi0) * dt    // cross track error
+
 epsi = psi0 - psides0 + v0 * delta0 * dt / Lf	// psi error
 
 ## Timestep Length and Elapsed Duration (N & dt)
