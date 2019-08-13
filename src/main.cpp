@@ -32,18 +32,27 @@ string hasData(string s) {
   return "";
 }
 
-// Evaluate a polynomial.
+// Evaluate a polynomial using Horner's method
+// Coefficients are ordered lowest order to highest order, e.g. [(x**0), (x**1), ... ,(x**5)]
 double polyeval(Eigen::VectorXd coeffs, double x) {
-  double result = 0.0;
-  for (int i = 0; i < coeffs.size(); i++) {
-    result += coeffs[i] * pow(x, i);
-  }
-  return result;
+    double result = coeffs[coeffs.size()-1];
+    for (size_t i = coeffs.size()-2; i >= 0; i--) {
+        result = result*x + coeffs[i];
+    }
+    return result;
 }
 
+//// Evaluate a polynomial.
+//double polyeval(Eigen::VectorXd coeffs, double x) {
+//  double result = 0.0;
+//  for (int i = 0; i < coeffs.size(); i++) {
+//    result += coeffs[i] * pow(x, i);
+//  }
+//  return result;
+//}
+
 // Fit a polynomial.
-// Adapted from
-// https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
+// Adapted from https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
 Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals, int order) {
   assert(xvals.size() == yvals.size());
   assert(order >= 1 && order <= xvals.size() - 1);
@@ -53,15 +62,13 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals, int order)
     A(i, 0) = 1.0;
   }
 
-  for (int j = 0; j < xvals.size(); j++) {
-    for (int i = 0; i < order; i++) {
-      A(j, i + 1) = A(j, i) * xvals(j);
+  for (int i = 0; i < xvals.size(); i++) {
+    for (int j = 0; j < order; j++) {
+      A(i, j + 1) = A(i, j) * xvals(i);
     }
   }
 
-  auto Q = A.householderQr();
-  auto result = Q.solve(yvals);
-  return result;
+  return A.householderQr().solve(yvals);
 }
 
 // Transform a point as observed by car (relative to car) to grid map perspective.
@@ -120,14 +127,32 @@ class CmdLineParser{
         std::vector<std::string> tokens;
 };
 
+void test_poly_fit()
+{
+    Eigen::VectorXd xvals(25);
+    xvals << 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24;
+    Eigen::VectorXd yvals(25);
+    yvals << 1.0, 2.1109, 3.4928, 5.2267, 7.3936, 10.0625, 13.2784, 17.0503, 21.3392, 26.0461, 31.0, 35.9459, 40.5328,
+            44.3017, 46.6736, 46.9375, 44.2384, 37.5653, 25.7392, 7.4011, -19.0, -55.2191, -103.2272, -165.2233, -243.6464;
+    // Fit a 2nd order polynomial to the trajectory
+    auto coeffs = polyfit(xvals, yvals, 5);
+
+    // Result should be:
+    //   coeffs:  1,1,0.1,0.01,0.001,-0.0001
+    //   for:     f(x) =  1 + x + 0.1*x**2 + 0.01*x**3 + 0.001*x**4 - 0.0001*x**5
+    std::cout << "coeffs:" <<coeffs[0] <<"," <<coeffs[1] <<"," <<coeffs[2] <<"," <<coeffs[3] <<"," <<coeffs[4] <<"," <<coeffs[5] <<std::endl;
+    exit(0);
+}
+
 int main(int argc, char **argv) {
-  uWS::Hub h;
+
+//  test_polyfit();
 
   CmdLineParser cmdline(argc, argv);
   std::string cmd_str;
 
   // -n for command line override of N
-  int cmd_n = 20;  // default N = 10
+  int cmd_n = 15;  // default N = 10
   cmd_str = cmdline.getOption("-n");
   if (!cmd_str.empty())
       cmd_n = std::stoi(cmd_str);
@@ -150,12 +175,12 @@ int main(int argc, char **argv) {
   if (!cmd_str.empty())
     latency = std::stoi(cmd_str);
 
-  // -lm for command line override of latency multiplier
+  // -clat for MPC solver latency
   //
   // The latency multiplier adds some additional latency to account for the simulator's processing time plus socket communication delay.
   //
-  // total latency = sleep(latency) + simulator processing time + communication delay
-  double clat = 35;
+  // total latency = sleep(latency) + MPC solver time
+  double clat = 29;
   cmd_str = cmdline.getOption("-clat");
   if (!cmd_str.empty())
     clat = std::stod(cmd_str);
@@ -179,7 +204,7 @@ int main(int argc, char **argv) {
     w_ev = std::stod(cmd_str);
   }
 
-  double w_delta  = 4500.0;// steering actuation
+  double w_delta  = 1000.0;// steering actuation
   cmd_str = cmdline.getOption("-w_delta");
   if (!cmd_str.empty()){
     w_delta = std::stod(cmd_str);
@@ -191,19 +216,19 @@ int main(int argc, char **argv) {
     w_a = std::stod(cmd_str);
   }
 
-  double w_sd      = 10.0;   // rate of steering actuation change
+  double w_sd      = 3000.0;   // rate of steering actuation change
   cmd_str = cmdline.getOption("-w_sd");
   if (!cmd_str.empty()){
     w_sd = std::stod(cmd_str);
   }
 
-  double w_sa      = 0.1;   // rate of throttle actuation change
+  double w_sa      = 50.0;   // rate of throttle actuation change
   cmd_str = cmdline.getOption("-w_sa");
   if (!cmd_str.empty()){
     w_sa = std::stod(cmd_str);
   }
 
-  double w_curve  = 19.0;   // speed around curves
+  double w_curve  = 0.115;   // speed around curves
   cmd_str = cmdline.getOption("-w_curve");
   if (!cmd_str.empty()){
     w_curve = std::stod(cmd_str);
@@ -226,7 +251,13 @@ int main(int argc, char **argv) {
   // MPC is initialized here!
   MPC mpc(N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_sd, w_sa, w_curve);
 
-  h.onMessage([&mpc, &N, &dt, &clat, &ref_v, &latency](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  auto start_time = std::chrono::system_clock::now();  // start time
+  std::chrono::duration<double> proc_time = std::chrono::duration<double>::zero();
+  int ct = 0;
+
+  uWS::Hub h;
+
+  h.onMessage([&mpc, &N, &dt, &clat, &ref_v, &latency, &start_time, &proc_time, &ct](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -244,6 +275,7 @@ int main(int argc, char **argv) {
         auto j = json::parse(s);
         string event = j[0].get<string>();
         if (event == "telemetry") {
+
           // j[1] is the data JSON object
           vector<double> ptsx = j[1]["ptsx"];
           vector<double> ptsy = j[1]["ptsy"];
@@ -269,7 +301,7 @@ int main(int argc, char **argv) {
               transform_map_to_car(x, y, psi, ptsx[i], ptsy[i], x_display[i], y_display[i]);
           }
 
-          // To compensate for actuation latency, project the vehicle's state to reflect where it will
+          // To compensate for actuation latency, predict the vehicle's state to reflect where it will
           // be after one latency period and use that as the current state.
           double dl = (float)(latency + clat)/1000;  // convert msec to seconds
           x += v * cos(psi) * dl;
@@ -286,7 +318,7 @@ int main(int argc, char **argv) {
           }
 
           // Fit a 2nd order polynomial to the trajectory
-          auto coeffs = polyfit(x_vals, y_vals, 2);
+          auto coeffs = polyfit(x_vals, y_vals, 3);
 
           // From world map perspective the cross track error is calculated by evaluating the trajectory
           // polynomial at x, i.e. f(x), and subtracting y, i.e. from where the vehicle is in global frame.
@@ -294,11 +326,11 @@ int main(int argc, char **argv) {
           // is now relative to car and the initial x is 0.  Since the map follows the center of the
           // lane, i.e. y=0 at center, the cte calculation is simplified to be just the evaluation of the
           // polynomial at x = 0.
-          double cte = polyeval(coeffs, 0);
+          double cte = coeffs[0];
 
-          // The orientation error, epsi, is psi - f'(x) (f'(x) is the slope at position x). Since the polynomial is relative to car
-          // then psi = 0 and additionally x = 0 so the calculation of derivative f'(x) is simplified
-          // to just coeffs[1].
+          // The orientation error, epsi, is psi - atan(f'(x)) where f'(x) is the slope of the trajectory at position x.
+          // Since the polynomial is relative to car then psi = 0 and additionally x = 0 so the calculation of derivative
+          // f'(x) is simplified to just coeffs[1] (The coefficients are ordered lowest order to highest order).
           double epsi = -atan(coeffs[1]);  // epsi the difference between car's current heading and the desired heading from trajectory.
 
 #if 0
@@ -314,7 +346,22 @@ int main(int argc, char **argv) {
           Eigen::VectorXd state(6);
           state << 0, 0, 0, v, cte, epsi;
 
+          auto time1 = std::chrono::system_clock::now();
+
           vector<double> a1 = mpc.Solve(state, coeffs);
+
+          auto time2 = std::chrono::system_clock::now();
+          proc_time += (time2 - time1);
+
+          // Measure average processing time for mpc.Solve()
+          ct += 1;
+          if (ct == 30)
+          {
+              ct = 0;
+              auto avg = proc_time / 30.0;
+              proc_time = std::chrono::duration<double>::zero();
+//              std::cout <<"avg:" <<avg.count() <<std::endl;
+          }
 
 #if 0
           cout << "a1: " << endl << endl;
@@ -342,7 +389,7 @@ int main(int argc, char **argv) {
           // coordinate system and are displayed in the simulator connected by a green line.
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
-          for (i = 3 ; i < 14 ; i++) {
+          for (i = 1 ; i < N ; i++) {
               mpc_x_vals.push_back(a1[0 + i]);
               mpc_y_vals.push_back(a1[N + i]);
           }
@@ -370,7 +417,7 @@ int main(int argc, char **argv) {
           // The purpose is to mimic real driving conditions where the car
           // doesn't actuate the commands instantly.
           //
-          // The car should be to drive around the track with 100ms latency.
+          // The car should be able to drive around the track with 100ms latency.
           this_thread::sleep_for(chrono::milliseconds(latency));
 
           /*
@@ -387,8 +434,7 @@ int main(int argc, char **argv) {
   });
 
   // We don't need this since we're not using HTTP but if it's removed the
-  // program
-  // doesn't compile :-(
+  // program doesn't compile :-(
   h.onHttpRequest([](uWS::HttpResponse *res, uWS::HttpRequest req, char *data,
                      size_t, size_t) {
     const std::string s = "<h1>Hello world!</h1>";

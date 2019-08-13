@@ -5,16 +5,24 @@
 
 using CppAD::AD;
 
-// Evaluate a polynomial.
-AD<double> ADpolyeval(Eigen::VectorXd coeffs, AD<double> x) {
-    AD<double> result = 0.0;
-    AD<double> x_to_the_ith = 1.0;
-    for (int i = 0; i < coeffs.size(); i++) {
-//        result += coeffs[i] * CppAD::pow(x, i);
-        result += coeffs[i] * x_to_the_ith;
-        x_to_the_ith *= x;
+// Evaluate a polynomial using Horner's method
+// Coefficients are ordered lowest order to highest order, e.g. [(x**0), (x**1), ... ,(x**5)]
+AD<double> ADpolyeval(CPPAD_TESTVECTOR(AD<double>) coeffs, AD<double> x) {
+    AD<double> result = coeffs[coeffs.size()-1];
+    for (int i = coeffs.size()-2; i >= 0; i--) {
+        result = result*x + coeffs[i];
     }
     return result;
+}
+
+// Returns coefficients for the derivative of a nth order polynomial.
+// Coefficients are ordered lowest order to highest order, e.g. [(x**0), (x**1), ... ,(x**5)]
+CPPAD_TESTVECTOR(AD<double>) ADdifferentiate(const CPPAD_TESTVECTOR(AD<double>) &coeffs)
+{
+    CPPAD_TESTVECTOR(AD<double>) new_c(coeffs.size()-1);
+    for (size_t n=1; n<coeffs.size(); n++)
+        new_c[n-1] = n * coeffs[n];
+    return new_c;
 }
 
 // This value assumes the model presented in the classroom is used.
@@ -42,14 +50,15 @@ size_t a_start;
 
 class FG_eval {
 public:
-    //
-    Eigen::VectorXd coeffs;  // Fitted 2nd order polynomial coefficients of the desired trajectory.
-    Eigen::VectorXd d_coeffs;  // first derivative of Fitted 2nd order polynomial
-    Eigen::VectorXd dd_coeffs;  // second derivative of Fitted 2nd order polynomial
+    typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
+
+    ADvector coeffs;  // Fitted polynomial coefficients of the desired trajectory.
+    ADvector d_coeffs;  // First derivative of fitted polynomial
+    ADvector dd_coeffs;  // Second derivative of fitted polynomial
 
     size_t N;
-    double dt;
-    double ref_v;
+    AD<double> dt;
+    AD<double> ref_v;
 
     // Cost function weights with defaults - controls relative cost of each part
     AD<double> w_cte    = 1.0;  // cross track error
@@ -64,7 +73,11 @@ public:
     // Constructor
     FG_eval(Eigen::VectorXd coeffs, size_t N, double dt, double ref_v, double w_cte, double w_epsi,
             double w_ev, double w_delta, double w_a, double w_sd, double w_sa, double w_curve) {
-      this->coeffs = coeffs;
+      this->coeffs.resize(coeffs.size());
+      for (int i=0; i<coeffs.size(); i++)
+          this->coeffs[i] = coeffs[i];
+      this->d_coeffs = ADdifferentiate(this->coeffs);
+      this->dd_coeffs = ADdifferentiate(this->d_coeffs);
       this->N = N;
       this->dt = dt;
       this->ref_v = ref_v;
@@ -79,8 +92,6 @@ public:
       this->w_sa = w_sa;
       this->w_curve = w_curve;
     }
-
-    typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
 
     // NOTE TO SELF: This class, FG_eval, is a C++ functor, i.e. it overloads operator(), i.e. it
     // returns a function that can then be used by the caller. Note that functors are always copied,
@@ -152,31 +163,20 @@ public:
             fg[0] += cost;
         }
 
-        // Minimize velocity around tight turns.
+        // Penalize high lateral acceleration around turns.
         //
         // The formula for the radius of curvature at any point x for the curve y = f(x) is given by:
         //    r = (1 + (dy/dx)**2)**(3/2) / (d2y/dx2)
-        // where the 1st derivative of y (2nd order polynomial) is:
-        //    y' = dy/dx = coeffs[1] + (2 * coeffs[2] * x)
-        // and the 2nd derivative of y is:
-        //    y'' = d2y/d2x = 2 * coeffs[2]
-        // At x=0 the radius is:
-        //    r[0] = (1 + coeffs[1]**2)**1.5) / (2 * coeffs[2])
-        AD<double>r0 = CppAD::pow(1.0 + CppAD::pow(coeffs[1], 2), 1.5) / (2 * coeffs[2]);
         for (t = 0; t < N - 1; t++) {
-            cost = w_curve * CppAD::pow(vars[v_start + t], 2) / r0;
+            AD<double> x = vars[x_start + t];
+            AD<double> dy_dx = ADpolyeval(this->d_coeffs, x);
+            AD<double> d2y_d2x = ADpolyeval(this->dd_coeffs, x);
+            AD<double> r = CppAD::pow(1.0 + dy_dx*dy_dx, 1.5) / d2y_d2x;
+            AD<double> lateral_accel = (vars[v_start + t] * vars[v_start + t]) / r;
+            lateral_accel *= lateral_accel;  // always positive
+            cost = w_curve * lateral_accel;
             fg[0] += cost;
         }
-        // At any x the radius is:
-        //    r = (1 + (coeffs[1] + (2*coeffs[2]*x))**2)**1.5) / (2 * coeffs[2])
-//        for (t = 0; t < N - 1; t++) {
-//            AD<double> x = vars[x_start + t];
-//            AD<double> dy_dx = coeffs[1] + 2*coeffs[2]*x;
-//            AD<double> r = CppAD::pow(1.0 + dy_dx*dy_dx, 1.5) / (2 * coeffs[2]);
-//            AD<double> lateral_accel = (vars[v_start + t] * vars[v_start + t]) / r;
-//            cost = w_curve * lateral_accel;
-//            fg[0] += cost;
-//        }
 
         // Setup the model constraints.
         //
@@ -356,7 +356,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   options += "Sparse  true        reverse\n";
   // Currently the solver has a maximum time limit of 0.5 seconds.
   // Change this as you see fit.
-  options += "Numeric max_cpu_time          0.5\n";
+  options += "Numeric max_cpu_time          0.025\n";
 
   // place to return solution
   CppAD::ipopt::solve_result<Dvector> solution;

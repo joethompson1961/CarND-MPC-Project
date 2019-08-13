@@ -63,7 +63,11 @@ Self-Driving Car Engineer Nanodegree Program
 
 ## Running Simulator on Windows and MPC on Linux
 
-You can run the simulator on windows and the code on Linux (either 2 separate machines (Windows & Linux respectively) or with Linux in VirtualBox on Windows).
+I'm currently running:
+- mpc is built in and runs in Windows Powershell running ubuntu
+- term2 simulator runs on Windows
+
+You can run the simulator on windows and the mpc application on Linux (either 2 separate physical machines (Windows & Linux respectively) or with Linux in VirtualBox on Windows).
 
 1. Setup the project on Linux
 2. Run this command on the Windows machine in Powershell window:
