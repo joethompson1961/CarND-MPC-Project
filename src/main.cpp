@@ -165,7 +165,7 @@ int main(int argc, char **argv) {
     dt = std::stod(cmd_str);
 
   // Set MPC timestep length, duration, and target velocity
-  double ref_v = 110.0;
+  double ref_v = 125.0;
   cmd_str = cmdline.getOption("-ref_v");
   if (!cmd_str.empty())
     ref_v = std::stod(cmd_str);
@@ -186,7 +186,7 @@ int main(int argc, char **argv) {
     clat = std::stod(cmd_str);
 
   // -w_cte for command line override of cost function weight for cte
-  double w_cte = 40; // cost function weight for cte
+  double w_cte = 70; // cost function weight for cte
   cmd_str = cmdline.getOption("-w_cte");
   if (!cmd_str.empty()){
     w_cte = std::stod(cmd_str);
@@ -216,7 +216,7 @@ int main(int argc, char **argv) {
     w_a = std::stod(cmd_str);
   }
 
-  double w_sd      = 3000.0;   // rate of steering actuation change
+  double w_sd      = 4500.0;   // rate of steering actuation change
   cmd_str = cmdline.getOption("-w_sd");
   if (!cmd_str.empty()){
     w_sd = std::stod(cmd_str);
@@ -228,10 +228,16 @@ int main(int argc, char **argv) {
     w_sa = std::stod(cmd_str);
   }
 
-  double w_curve  = 0.115;   // speed around curves
+  double w_curve  = 0.12;   // speed around curves
   cmd_str = cmdline.getOption("-w_curve");
   if (!cmd_str.empty()){
     w_curve = std::stod(cmd_str);
+  }
+
+  double w_wide  = 1.0;   // wide turns
+  cmd_str = cmdline.getOption("-w_wide");
+  if (!cmd_str.empty()){
+    w_wide = std::stod(cmd_str);
   }
 
   cout << "N: " << N << endl;     // MPC duration
@@ -249,7 +255,7 @@ int main(int argc, char **argv) {
   cout << "w_curve: " << w_curve << endl;
 
   // MPC is initialized here!
-  MPC mpc(N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_sd, w_sa, w_curve);
+  MPC mpc(N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_sd, w_sa, w_curve, w_wide);
 
   auto start_time = std::chrono::system_clock::now();  // start time
   std::chrono::duration<double> proc_time = std::chrono::duration<double>::zero();

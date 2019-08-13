@@ -69,10 +69,11 @@ public:
     AD<double> w_sd     = 1.0;  // rate of steering change
     AD<double> w_sa     = 1.0;  // rate of throttle change
     AD<double> w_curve  = 1.0;  // speed around curves
+    AD<double> w_wide   = 1.0;  // wide turns
 
     // Constructor
     FG_eval(Eigen::VectorXd coeffs, size_t N, double dt, double ref_v, double w_cte, double w_epsi,
-            double w_ev, double w_delta, double w_a, double w_sd, double w_sa, double w_curve) {
+            double w_ev, double w_delta, double w_a, double w_sd, double w_sa, double w_curve, double w_wide) {
       this->coeffs.resize(coeffs.size());
       for (int i=0; i<coeffs.size(); i++)
           this->coeffs[i] = coeffs[i];
@@ -91,19 +92,21 @@ public:
       this->w_sd = w_sd;
       this->w_sa = w_sa;
       this->w_curve = w_curve;
+      this->w_wide = w_wide;
     }
 
     // NOTE TO SELF: This class, FG_eval, is a C++ functor, i.e. it overloads operator(), i.e. it
     // returns a function that can then be used by the caller. Note that functors are always copied,
     // so good to avoid large code and data that is expensive to copy.
     //
-    // The idea here is that the optimizer is trying to find a set of inputs (i.e. vars - the
-    // things that are controlled, in this case the vehicle's states and actuators) that produce
-    // produce the lowest costs (fg), i.e. where the contents of the fg vector ideally equal 0.
+    // The idea here is that the optimizer is trying to find a set of inputs (i.e. vars - the things
+    // that are controlled by the optimizer, in this case the vehicle's states and actuators) that
+    // produce the lowest costs (fg), i.e. where the contents of all elements in the fg vector ideally
+    // equal 0.
     //
     // This functor is used to calculate what is the cost associated with each set of inputs.
     //
-    // In this particular usage the input vars represents a sequence of N future trajectory states.
+    // In this particular usage the input vars represents a sequence of N future vehicle states.
     //
     // CppAD (Algorithmic Differentiation, aka Automatic Differentiation) is for the step by step
     // conversion from an algorithm that computes function values to an algorithm that computes derivative
@@ -113,33 +116,47 @@ public:
     // Need to confirm:  The optimizer uses the derivative function to evaluate the change
     // in cost with respect to the inputs.
     void operator()(ADvector& fg, const ADvector& vars) {
-        // `fg` a vector of the cost constraints to be filled by this functor.
         // `vars` is a vector of input variable values (state & actuators), the things the solver
         // controls.
         //
-        // The cost is stored is the first element of `fg`, i.e. fg[0].
-        // Any additions to the cost should be added to `fg[0]`.
+        // `fg` a vector of the cost and constraints to be filled by this functor.
+        //
+        // The accumulated total cost is stored in the first element of `fg`, i.e. fg[0].
         size_t t;
         AD<double> cost;
         fg[0] = 0;
 
-        // Reference State Cost
-        // Define the cost related to the reference state
-        // Minimize cross track and orientation errors
-        for (t = 0; t < N ; t++) {
-            cost = w_cte * CppAD::pow(vars[cte_start + t], 2);
-//            cout << "cost - cte: " << cost << endl;
-            fg[0] += cost;
+        // Calculate the reference state cost - here we define the costs related to the reference states
 
+        for (t = 0; t < N ; t++) {
+            // The radius of curvature at any point x for the curve y = f(x) is given by:
+            //    r = (1 + (dy/dx)**2)**(3/2) / (d2y/dx2)
+            // The lateral acceleration at any point on the curve is given by:
+            //    la = v**2/r
+            AD<double> x = vars[x_start + t];
+            AD<double> dy_dx = ADpolyeval(this->d_coeffs, x);
+            AD<double> d2y_d2x = ADpolyeval(this->dd_coeffs, x);
+            AD<double> r = CppAD::pow(1.0 + dy_dx*dy_dx, 1.5) / d2y_d2x;
+            AD<double> v = vars[v_start + t];
+            AD<double> la = (v*v)/r;
+
+            // Minimize orientation errors
             cost = w_epsi * CppAD::pow(vars[epsi_start + t], 2);
 //            cout << "cost - epsi: " << cost << endl;
             fg[0] += cost;
-        }
 
-        // Minimize velocity error (the difference between velocity and target velocity)
-        for (t = 0; t < N ; t++) {
+            // Minimize velocity error (the difference between velocity and target velocity)
             cost = w_ev * CppAD::pow(ref_v - vars[v_start + t], 2);
 //            cout << "cost - ev: " << cost << endl;
+            fg[0] += cost;
+
+            // Minimize cte, but adjust cost cte based on lateral acceleration to reward taking tight turns.
+            AD<double> tgt_cte = vars[cte_start + t] + la * 0.0133; // right turn prefers right side, left turn prefers left side
+            cost = w_cte * CppAD::pow(tgt_cte, 2);
+            fg[0] += cost;
+
+            // Minimize high lateral accelerations, i.e. going too fast around turns.
+            cost = w_curve * CppAD::pow(la, 2);  // always positive
             fg[0] += cost;
         }
 
@@ -163,25 +180,10 @@ public:
             fg[0] += cost;
         }
 
-        // Penalize high lateral acceleration around turns.
-        //
-        // The formula for the radius of curvature at any point x for the curve y = f(x) is given by:
-        //    r = (1 + (dy/dx)**2)**(3/2) / (d2y/dx2)
-        for (t = 0; t < N - 1; t++) {
-            AD<double> x = vars[x_start + t];
-            AD<double> dy_dx = ADpolyeval(this->d_coeffs, x);
-            AD<double> d2y_d2x = ADpolyeval(this->dd_coeffs, x);
-            AD<double> r = CppAD::pow(1.0 + dy_dx*dy_dx, 1.5) / d2y_d2x;
-            AD<double> lateral_accel = (vars[v_start + t] * vars[v_start + t]) / r;
-            lateral_accel *= lateral_accel;  // always positive
-            cost = w_curve * lateral_accel;
-            fg[0] += cost;
-        }
-
         // Setup the model constraints.
         //
         // Add 1 to each of the starting indices due to cost being located at
-        // index 0 of `fg`. This bumps up the position of all the other values.
+        // index 0 of `fg`. This bumps up the position of the other values.
         fg[1 + x_start] = vars[x_start];
         fg[1 + y_start] = vars[y_start];
         fg[1 + psi_start] = vars[psi_start];
@@ -228,7 +230,7 @@ public:
 // MPC class definition implementation.
 //
 MPC::MPC(size_t N, double dt, double ref_v, double w_cte, double w_epsi,
-         double w_ev, double w_delta, double w_a, double w_sd, double w_sa, double w_curve) {
+         double w_ev, double w_delta, double w_a, double w_sd, double w_sa, double w_curve, double w_wide) {
   this->N = N;
   this->dt = dt;
   this->ref_v = ref_v;
@@ -240,6 +242,7 @@ MPC::MPC(size_t N, double dt, double ref_v, double w_cte, double w_epsi,
   this->w_sd = w_sd;
   this->w_sa = w_sa;
   this->w_curve = w_curve;
+  this->w_wide = w_wide;
 
   x_start = 0;
   y_start = x_start + N;
@@ -340,7 +343,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   constraints_upperbound[epsi_start] = epsi;
 
   // object that computes objective and constraints
-  FG_eval fg_eval(coeffs, N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_sd, w_sa, w_curve);
+  FG_eval fg_eval(coeffs, N, dt, ref_v, w_cte, w_epsi, w_ev, w_delta, w_a, w_sd, w_sa, w_curve, w_wide);
 
   // options for IPOPT solver
   std::string options;
