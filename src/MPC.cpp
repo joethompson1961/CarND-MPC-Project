@@ -48,6 +48,9 @@ size_t epsi_start;
 size_t delta_start;
 size_t a_start;
 
+// This class, FG_eval, is a C++ functor, i.e. it overloads operator(), i.e. it returns
+// a function that can then be used by the caller. Note that functors are always copied,
+// so good to avoid large code and data that is expensive to copy.
 class FG_eval {
 public:
     typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
@@ -95,26 +98,38 @@ public:
       this->w_wide = w_wide;
     }
 
-    // NOTE TO SELF: This class, FG_eval, is a C++ functor, i.e. it overloads operator(), i.e. it
-    // returns a function that can then be used by the caller. Note that functors are always copied,
-    // so good to avoid large code and data that is expensive to copy.
+    // This functor is used to calculate:
+    //   1) What is the cost associated with each set of inputs from the solver.
+    //   2) How well the inputs fit within the constraints of the vehicle's motion model.
+    // In the general case of optimization solvers this is often referred to as the objective
+    // function. It could be used to evaluate any number of additional constraints.  For example
+    // it could evaluate the input states against the states of other obstacles looking for
+    // collisions, but this isn't applicable to this MPC feedback controller which is used
+    // simply to go around the course as fast as possible.
     //
-    // The idea here is that the optimizer is trying to find a set of inputs (i.e. vars - the things
+    // In this usage of the solver the input vars represents a sequence of N future vehicle states.
+    //
+    // The idea here is that the solver is trying to find a set of inputs (i.e. vars - the things
     // that are controlled by the optimizer, in this case the vehicle's states and actuators) that
-    // produce the lowest costs (fg), i.e. where the contents of all elements in the fg vector ideally
-    // equal 0.
+    // produce the lowest cost while not violating the constraints, i.e. where the contents of all
+    // elements in the fg vector ideally converge to zero, indicating a local minimum.
     //
-    // This functor is used to calculate what is the cost associated with each set of inputs.
+    // For evaluation of constraints, this functor returns the difference between the states
+    // chosen/guessed by the solver, i.e. "vars", and the constrained behavior of the vehicle
+    // based on the vehicle's motion model.  It does this for each state transition.  In other
+    // words, at state N, the motion model predicts what the next state, N+1, should be.  The
+    // difference between the guessed next state and the predicted next state are returned.
+    // This provides feedback to the solver about how well the guessed states fit the
+    // constraints.  Reducing this deviation at all states is the goal of the solver.  It can
+    // require many iterations for the solver to converge on a solution.
     //
-    // In this particular usage the input vars represents a sequence of N future vehicle states.
-    //
-    // CppAD (Algorithmic Differentiation, aka Automatic Differentiation) is for the step by step
-    // conversion from an algorithm that computes function values to an algorithm that computes derivative
-    // values. Given a C++ algorithm that computes function values, CppAD generates an algorithm that
+    // The first and second derivatives of this functor provide feedback to the solver about
+    // whether the solution is converging to a local minimum and how fast it's converging.
+    // CppAD is used by the solver to generate first and second derivatives. CppAD (Algorithmic
+    // Differentiation, aka Automatic Differentiation) is for the step by step conversion from
+    // an algorithm that computes function values to an algorithm that computes derivative values.
+    // Given a C++ algorithm that computes function values, CppAD generates an algorithm that
     // computes its derivative values.
-    //
-    // Need to confirm:  The optimizer uses the derivative function to evaluate the change
-    // in cost with respect to the inputs.
     void operator()(ADvector& fg, const ADvector& vars) {
         // `vars` is a vector of input variable values (state & actuators), the things the solver
         // controls.
@@ -126,8 +141,7 @@ public:
         AD<double> cost;
         fg[0] = 0;
 
-        // Calculate the reference state cost - here we define the costs related to the reference states
-
+        // Here we define the costs related to the reference states
         for (t = 0; t < N ; t++) {
             // The radius of curvature at any point x for the curve y = f(x) is given by:
             //    r = (1 + (dy/dx)**2)**(3/2) / (d2y/dx2)
@@ -150,7 +164,7 @@ public:
 //            cout << "cost - ev: " << cost << endl;
             fg[0] += cost;
 
-            // Minimize cte, but adjust cost cte based on lateral acceleration to reward taking tight turns.
+            // Minimize cte, but adjust cost based on lateral acceleration to reward taking tight turns.
             AD<double> tgt_cte = vars[cte_start + t] + la * 0.0133; // right turn prefers right side, left turn prefers left side
             cost = w_cte * CppAD::pow(tgt_cte, 2);
             fg[0] += cost;
@@ -180,9 +194,9 @@ public:
             fg[0] += cost;
         }
 
-        // Setup the model constraints.
-        //
-        // Add 1 to each of the starting indices due to cost being located at
+        // Here we setup the model constraints.
+
+        // Adding 1 to each of the starting indices due to cost being located at
         // index 0 of `fg`. This bumps up the position of the other values.
         fg[1 + x_start] = vars[x_start];
         fg[1 + y_start] = vars[y_start];
@@ -191,8 +205,19 @@ public:
         fg[1 + cte_start] = vars[cte_start];
         fg[1 + epsi_start] = vars[epsi_start];
 
-        // Set up the rest of the constraints <from the motion model>>
+        // Set up the rest of the constraints <from the motion model>
         for (t = 1; t < N; t++) {
+            AD<double> x0 = vars[x_start + t - 1];
+            AD<double> y0 = vars[y_start + t - 1];
+            AD<double> psi0 = vars[psi_start + t - 1];
+            AD<double> v0 = vars[v_start + t - 1];
+            AD<double> cte0 = vars[cte_start + t - 1];
+            AD<double> epsi0 = vars[epsi_start + t - 1];
+            AD<double> delta0 = vars[delta_start + t - 1];
+            AD<double> a0 = vars[a_start + t - 1];
+            AD<double> f0 = ADpolyeval(coeffs, x0);
+            AD<double> psides0 = CppAD::atan(ADpolyeval(d_coeffs, x0));  // desired psi
+
             AD<double> x1 = vars[x_start + t];
             AD<double> y1 = vars[y_start + t];
             AD<double> psi1 = vars[psi_start + t];
@@ -200,22 +225,6 @@ public:
             AD<double> cte1 = vars[cte_start + t];
             AD<double> epsi1 = vars[epsi_start + t];
 
-            AD<double> x0 = vars[x_start + t - 1];
-            AD<double> y0 = vars[y_start + t - 1];
-            AD<double> psi0 = vars[psi_start + t - 1];
-            AD<double> v0 = vars[v_start + t - 1];
-            AD<double> cte0 = vars[cte_start + t - 1];
-            AD<double> epsi0 = vars[epsi_start + t - 1];
-
-            AD<double> delta0 = vars[delta_start + t - 1];
-            AD<double> a0 = vars[a_start + t - 1];
-
-            AD<double> f0 = ADpolyeval(coeffs, x0);
-            AD<double> psides0 = CppAD::atan(coeffs[1] + 2 * coeffs[2] * x0);  // desired psi
-
-            //
-            // The use of `AD<double>` and use of `CppAD` is so CppAD can
-            // compute derivatives and pass these to the solver.
             fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
             fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
             fg[1 + psi_start + t] = psi1 - (psi0 - v0 * delta0 * dt / Lf);
